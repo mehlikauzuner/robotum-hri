@@ -1,0 +1,27 @@
+# ROS2 generated files
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+
+# Foxglove generated dependencies/build
+foxglove_extensions/**/node_modules/
+foxglove_extensions/**/dist/
+
+# Local backup
+foxglove_extensions/hri-command-center-backup/
+
+# Debug / generated graph files
+frames_*.gv
+frames_*.pdf
+
+# Temporary / backup files
+*.backup
+*.save
+*.swp
