@@ -1,0 +1,45 @@
+cmake_minimum_required(VERSION 3.20)
+project(karto_sdk)
+
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+set(CMAKE_BUILD_TYPE Release) #None, Debug, Release, RelWithDebInfo, MinSizeRel
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftemplate-backtrace-limit=0")
+endif()
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(Eigen3 REQUIRED)
+cmake_policy(SET CMP0167 OLD)
+find_package(Boost REQUIRED serialization filesystem thread)
+find_package(TBB REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
+
+set(dependencies
+  rclcpp
+  rclcpp_lifecycle
+)
+
+include_directories(include ${EIGEN3_INCLUDE_DIRS} 
+                            ${Boost_INCLUDE_DIR}
+                            ${BOOST_INCLUDE_DIRS}
+                            ${TBB_INCLUDE_DIRS}
+)
+
+add_definitions(${EIGEN3_DEFINITIONS})
+
+include_directories(include ${EIGEN3_INCLUDE_DIRS} ${TBB_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+add_library(kartoSlamToolbox SHARED src/Karto.cpp src/Mapper.cpp)
+target_compile_definitions(kartoSlamToolbox PRIVATE KARTO_DYNAMIC)
+target_link_libraries(kartoSlamToolbox PUBLIC
+  rclcpp::rclcpp
+  rclcpp_lifecycle::rclcpp_lifecycle
+)
+target_link_libraries(kartoSlamToolbox PUBLIC ${Boost_LIBRARIES} TBB::tbb)
+
+install(DIRECTORY include/
+	DESTINATION include/
+)
