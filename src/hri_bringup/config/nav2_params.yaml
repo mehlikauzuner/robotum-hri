@@ -517,7 +517,7 @@ collision_monitor:
     # Polygons represent zone around the robot for "stop", "slowdown" and "limit" action types,
     # and robot footprint for "approach" action type.
     
-    polygons: ["FootprintApproach", "StopZone"]
+    polygons: []
 
     FootprintApproach:
       type: "polygon"
@@ -530,12 +530,6 @@ collision_monitor:
       visualize: false
       enabled: true
 
-    StopZone:
-      type: "polygon"
-      action_type: "stop"
-      points: "[[0.30, 0.0], [0.212, 0.212], [0.0, 0.30], [-0.212, 0.212], [-0.30, 0.0], [-0.212, -0.212], [0.0, -0.30], [0.212, -0.212]]"
-      visualize: true
-      enabled: true
       
     observation_sources: ["scan"]
     scan:
@@ -615,4 +609,13 @@ loopback_simulator:
 
 lifecycle_manager_navigation:
   ros__parameters:
+    autostart: true
     bond_timeout: 0.0
+    node_names:
+      - controller_server
+      - planner_server
+      - smoother_server
+      - behavior_server
+      - bt_navigator
+      - waypoint_follower
+      - velocity_smoother

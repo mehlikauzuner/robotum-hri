@@ -15,9 +15,6 @@ def generate_launch_description():
     nav2_bringup = get_package_share_directory('nav2_bringup')
     hri_bringup = get_package_share_directory('hri_bringup')
 
-    # ---------------------------------------------------------
-    # 1. Gazebo
-    # ---------------------------------------------------------
     gazebo_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -28,9 +25,6 @@ def generate_launch_description():
         )
     )
 
-    # ---------------------------------------------------------
-    # 2. SLAM
-    # ---------------------------------------------------------
     slam_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -49,16 +43,12 @@ def generate_launch_description():
         }.items()
     )
 
-    # ---------------------------------------------------------
-    # 3. Nav2
-    # Start after Gazebo + SLAM have had time to initialize
-    # ---------------------------------------------------------
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                nav2_bringup,
+                hri_bringup,
                 'launch',
-                'navigation_launch.py'
+                'navigation_no_collision.launch.py'
             )
         ),
         launch_arguments={
@@ -72,9 +62,6 @@ def generate_launch_description():
         }.items()
     )
 
-    # ---------------------------------------------------------
-    # 4. Other nodes
-    # ---------------------------------------------------------
     foxglove_bridge = Node(
         package='foxglove_bridge',
         executable='foxglove_bridge',
@@ -84,6 +71,23 @@ def generate_launch_description():
     cmd_vel_converter = Node(
         package='cmd_vel_converter',
         executable='converter',
+        output='screen',
+        remappings=[
+            ('cmd_vel', '/cmd_vel_unsafe')
+        ]
+    )
+
+    cmd_vel_mux = Node(
+        package='cmd_vel_mux',
+        executable='mux',
+        name='cmd_vel_mux',
+        output='screen'
+    )
+
+    direction_safety = Node(
+        package='direction_safety',
+        executable='direction_safety',
+        name='direction_safety',
         output='screen'
     )
 
@@ -93,14 +97,10 @@ def generate_launch_description():
         output='screen'
     )
 
-    # ---------------------------------------------------------
-    # Launch order
-    # ---------------------------------------------------------
     return LaunchDescription([
-        # Start Gazebo first
+
         gazebo_launch,
 
-        # Give Gazebo time to publish clock / TF / scan / odom
         TimerAction(
             period=5.0,
             actions=[
@@ -108,7 +108,6 @@ def generate_launch_description():
             ]
         ),
 
-        # Give SLAM time to initialize before Nav2
         TimerAction(
             period=12.0,
             actions=[
@@ -118,5 +117,7 @@ def generate_launch_description():
 
         foxglove_bridge,
         cmd_vel_converter,
+        cmd_vel_mux,
+        direction_safety,
         planner_node,
     ])
