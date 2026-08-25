@@ -31,6 +31,13 @@ class DirectionSafety(Node):
             10
         )
 
+        self.mux_cmd_sub = self.create_subscription(
+            TwistStamped,
+            '/cmd_vel_muxed',
+            self.cmd_callback,
+            10
+        )
+
         self.scan_sub = self.create_subscription(
             LaserScan,
             '/scan',
