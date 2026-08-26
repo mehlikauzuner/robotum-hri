@@ -18,7 +18,7 @@ class PlannerNode(Node):
 
         self.subscription = self.create_subscription(
             String,
-            "/user_command",
+            "/parsed_command",
             self.command_callback,
             10
         )
@@ -105,9 +105,41 @@ class PlannerNode(Node):
         goal_msg.pose.pose.orientation.z = 0.0
         goal_msg.pose.pose.orientation.w = 1.0
 
-        self.nav_client.send_goal_async(
+        future = self.nav_client.send_goal_async(
             goal_msg,
             feedback_callback=self.feedback_callback
+        )
+
+        future.add_done_callback(self.goal_response_callback)
+
+    def goal_response_callback(self, future):
+        goal_handle = future.result()
+
+        if not goal_handle.accepted:
+            self.get_logger().error(
+                "Navigation goal was REJECTED."
+            )
+            return
+
+        self.get_logger().info(
+            "Navigation goal was ACCEPTED."
+        )
+
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(
+            self.get_result_callback
+        )
+
+    def get_result_callback(self, future):
+        result = future.result()
+
+        self.get_logger().info(
+            f"Navigation finished with status: "
+            f"{result.status}"
+        )
+
+        self.get_logger().info(
+            f"Result: {result.result}"
         )
 
     def feedback_callback(self, feedback_msg):

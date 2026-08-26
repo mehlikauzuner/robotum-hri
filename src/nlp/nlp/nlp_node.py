@@ -18,6 +18,12 @@ class NLPNode(Node):
             10
         )
 
+        self.publisher = self.create_publisher(
+            String,
+            "/parsed_command",
+            10
+        )
+
         self.get_logger().info("NLP Node Started.")
 
     def command_callback(self, msg):
@@ -57,8 +63,19 @@ class NLPNode(Node):
             with urllib.request.urlopen(request, timeout=30) as response:
                 result = json.loads(response.read().decode("utf-8"))
 
+            parsed_command = result["response"].strip()
+
             self.get_logger().info(
-                f"Ollama response: {result['response']}"
+                f"Ollama response: {parsed_command}"
+            )
+
+            # Publish parsed JSON command for the planner
+            output = String()
+            output.data = parsed_command
+            self.publisher.publish(output)
+
+            self.get_logger().info(
+                f"Published to /parsed_command: {parsed_command}"
             )
 
         except Exception as e:
