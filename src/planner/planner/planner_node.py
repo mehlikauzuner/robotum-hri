@@ -18,7 +18,7 @@ class PlannerNode(Node):
 
         self.subscription = self.create_subscription(
             String,
-            "/parsed_command",
+            "/semantic_command",
             self.command_callback,
             10
         )

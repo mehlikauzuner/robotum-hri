@@ -40,7 +40,8 @@ class NLPNode(Node):
             '{"action":"move","direction":"forward|backward"}, '
             '{"action":"rotate","direction":"left|right"}, '
             '{"action":"stop"}, '
-            '{"action":"navigate","x":number,"y":number}. '
+            '{"action":"navigate","x":number,"y":number}, '
+'{"action":"navigate","target":"home|tree|car|Eren|Mehlika|school|hospital|market|park"}. '
             f"User command: {command}. "
             "Return JSON only, no markdown, no explanation."
         )

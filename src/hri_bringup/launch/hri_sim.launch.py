@@ -106,6 +106,12 @@ def generate_launch_description():
         output='screen'
     )
 
+    nlp_node = Node(
+        package='nlp',
+        executable='nlp_node',
+        output='screen'
+    )
+
     semantic_map_node = Node(
         package='semantic_map',
         executable='semantic_map_node',
@@ -141,6 +147,7 @@ def generate_launch_description():
         cmd_vel_converter,
         cmd_vel_mux,
         direction_safety,
+        nlp_node,
         semantic_map_node,
         planner_node,
     ])

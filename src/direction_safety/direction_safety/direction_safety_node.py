@@ -18,7 +18,7 @@ class DirectionSafety(Node):
         self.last_safe_msg = None
 
         # Robot engelden bu mesafeye gelmeden duracak
-        self.safety_distance = 0.35
+        self.safety_distance = 0.20
 
         # Hareket yönü için kontrol edilen alan
         self.front_angle = math.radians(30)
