@@ -37,3 +37,31 @@ voice_test.wav
 
 # Local backup files
 *.backup
+
+# ROS 2 build artifacts
+/build/
+/install/
+/log/
+
+# Audio test files
+*.wav
+*.mp3
+*.ogg
+*.flac
+
+# Backup files
+*.backup
+*.bak
+*_backup*
+*.tts_backup
+
+# TTS model files
+/tts_models/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Node / editor files
+*.swp
+*.swo

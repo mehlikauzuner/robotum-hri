@@ -58,6 +58,7 @@ class SemanticMapNode(Node):
         output = String()
         output.data = json.dumps({
             "action": "navigate",
+            "target": target,
             "x": obj["x"],
             "y": obj["y"]
         })

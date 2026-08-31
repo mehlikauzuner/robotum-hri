@@ -132,6 +132,20 @@ def generate_launch_description():
         output='screen'
     )
 
+    tts_node = Node(
+        package='tts',
+        executable='tts_node',
+        output='screen'
+    )
+
+    tts_server = ExecuteProcess(
+        cmd=[
+            '/home/mehlika/whisper-env/bin/python',
+            '/home/mehlika/robotum-hri-github/tts_backend/tts_server.py'
+        ],
+        output='screen'
+    )
+
     return LaunchDescription([
 
         gazebo_launch,
@@ -159,4 +173,6 @@ def generate_launch_description():
         semantic_map_node,
         planner_node,
         whisper_server,
+        tts_node,
+        tts_server,
     ])
