@@ -3,7 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.actions import ExecuteProcess, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
@@ -124,6 +124,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    whisper_server = ExecuteProcess(
+        cmd=[
+            '/home/mehlika/whisper-env/bin/python',
+            '/home/mehlika/robotum-hri-github/voice_backend/whisper_server.py'
+        ],
+        output='screen'
+    )
+
     return LaunchDescription([
 
         gazebo_launch,
@@ -150,4 +158,5 @@ def generate_launch_description():
         nlp_node,
         semantic_map_node,
         planner_node,
+        whisper_server,
     ])

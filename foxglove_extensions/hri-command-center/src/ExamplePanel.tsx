@@ -1,5 +1,5 @@
 import { PanelExtensionContext } from "@foxglove/extension";
-import { ReactElement, useState } from "react";
+import { ReactElement, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 interface Props {
@@ -9,6 +9,10 @@ interface Props {
 function ExamplePanel({ context }: Props): ReactElement {
   const [command, setCommand] = useState("");
   const [lastCommand, setLastCommand] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const quickCommands = [
     { icon: "↑", label: "İleri" },
@@ -24,6 +28,90 @@ function ExamplePanel({ context }: Props): ReactElement {
     "Move forward",
     "Turn left",
   ];
+
+  const startVoiceCommand = async () => {
+    if (isRecording) {
+      return;
+    }
+
+    setVoiceError("");
+    setIsRecording(true);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        setIsRecording(false);
+        stream.getTracks().forEach((track) => track.stop());
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorder.mimeType,
+        });
+
+        try {
+          const response = await fetch(
+            "http://127.0.0.1:8766/transcribe",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "audio/wav",
+              },
+              body: audioBlob,
+            },
+          );
+
+          if (!response.ok) {
+            throw new Error(`Whisper server error: ${response.status}`);
+          }
+
+          const result = await response.json();
+
+          if (result.error) {
+            throw new Error(result.error);
+          }
+
+          const text = result.text?.trim();
+
+          if (text) {
+            setCommand(text);
+            setLastCommand(text);
+          }
+
+          console.log("Whisper result:", result);
+        } catch (error) {
+          console.error("Whisper transcription failed:", error);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+
+      setTimeout(() => {
+        if (mediaRecorder.state === "recording") {
+          mediaRecorder.stop();
+        }
+      }, 5000);
+
+    } catch (error) {
+      console.error("Microphone access failed:", error);
+      setIsRecording(false);
+      setVoiceError(
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  };
 
   const sendCommand = () => {
     const trimmedCommand = command.trim();
@@ -152,17 +240,32 @@ function ExamplePanel({ context }: Props): ReactElement {
             marginTop: "8px",
           }}
         >
+          {voiceError && (
+            <div
+              style={{
+                marginTop: "8px",
+                fontSize: "12px",
+                color: "red",
+              }}
+            >
+              Microphone error: {voiceError}
+            </div>
+          )}
+
           <button
+            onClick={startVoiceCommand}
+            disabled={isRecording}
             style={{
               padding: "10px 14px",
               borderRadius: "8px",
               border: "1px solid rgba(128,128,128,0.35)",
               background: "transparent",
-              cursor: "pointer",
+              cursor: isRecording ? "default" : "pointer",
               fontSize: "13px",
+              opacity: isRecording ? 0.6 : 1,
             }}
           >
-            🎤 Voice
+            {isRecording ? "🎙️ Listening..." : "🎤 Voice"}
           </button>
 
           <button

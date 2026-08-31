@@ -25,3 +25,15 @@ frames_*.pdf
 *.backup
 *.save
 *.swp
+
+# Whisper test audio/transcription outputs
+test*.wav
+test*.json
+test*.srt
+test*.tsv
+test*.txt
+test*.vtt
+voice_test.wav
+
+# Local backup files
+*.backup

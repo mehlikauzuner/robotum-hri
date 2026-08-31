@@ -41,7 +41,7 @@ class SemanticMapNode(Node):
         try:
             data = json.loads(msg.data)
         except json.JSONDecodeError:
-            self.get_logger().warn("Invalid JSON command.")
+            self.get_logger().warning("Invalid JSON command.")
             return
 
         target = data.get("target")
@@ -50,7 +50,7 @@ class SemanticMapNode(Node):
             return
 
         if target not in self.objects:
-            self.get_logger().warn(f"Unknown target: {target}")
+            self.get_logger().warning(f"Unknown target: {target}")
             return
 
         obj = self.objects[target]
