@@ -49,7 +49,7 @@ class PlannerNode(Node):
         )
 
         # Safe approach distance from semantic object
-        self.safe_approach_distance = 0.40
+        self.safe_approach_distance = 0.30
 
         # Latest robot position in odom frame
         self.robot_x = None
@@ -228,9 +228,11 @@ class PlannerNode(Node):
             feedback_callback=self.feedback_callback
         )
 
-        future.add_done_callback(self.goal_response_callback)
+        future.add_done_callback(
+            lambda future: self.goal_response_callback(future, target)
+        )
 
-    def goal_response_callback(self, future):
+    def goal_response_callback(self, future, target):
         goal_handle = future.result()
 
         if not goal_handle.accepted:
@@ -248,10 +250,10 @@ class PlannerNode(Node):
 
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(
-            self.get_result_callback
+            lambda future: self.get_result_callback(future, target)
         )
 
-    def get_result_callback(self, future):
+    def get_result_callback(self, future, target):
         result = future.result()
 
         self.navigation_active = False
@@ -267,7 +269,7 @@ class PlannerNode(Node):
 
         if result.status == 4:
             self.publish_response(
-                f"I have arrived at {self.current_target}."
+                f"I have arrived at {target}."
             )
         else:
             self.publish_response(

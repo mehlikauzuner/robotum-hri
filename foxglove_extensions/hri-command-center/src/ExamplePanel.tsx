@@ -51,7 +51,10 @@ function ExamplePanel({ context }: Props): ReactElement {
                 action.includes("i have arrived at") ||
                 action.startsWith("arrived at");
 
-              if (arrived) {
+              const failed =
+                action.includes("i could not reach");
+
+              if (arrived || failed) {
                 activeCommandRef.current = null;
 
                 const nextCommand = commandQueueRef.current.shift();
