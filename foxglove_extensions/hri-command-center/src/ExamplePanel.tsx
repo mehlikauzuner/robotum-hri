@@ -1,5 +1,5 @@
 import { PanelExtensionContext } from "@foxglove/extension";
-import { ReactElement, useRef, useState } from "react";
+import { ReactElement, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 interface Props {
@@ -11,23 +11,94 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [lastCommand, setLastCommand] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [voiceError, setVoiceError] = useState("");
+
+  const [currentAction, setCurrentAction] = useState("Idle");
+  const [queue, setQueue] = useState<string[]>([]);
+  const [statusError, setStatusError] = useState("");
+
+  const [parsedAction, setParsedAction] = useState("{ action: waiting }");
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  const quickCommands = [
-    { icon: "↑", label: "İleri" },
-    { icon: "←", label: "Sola Dön" },
-    { icon: "→", label: "Sağa Dön" },
-    { icon: "↓", label: "Geri" },
-    { icon: "■", label: "Dur" },
-  ];
+  const commandQueueRef = useRef<string[]>([]);
+  const activeCommandRef = useRef<string | null>(null);
 
-  const exampleCommands = [
-    "Go to the kitchen",
-    "Go to the table",
-    "Move forward",
-    "Turn left",
-  ];
+  useEffect(() => {
+    context.subscribe([
+      { topic: "/robot_status" },
+      { topic: "/parsed_command" },
+    ]);
+
+    context.watch("currentFrame");
+
+    context.onRender = (renderState, done) => {
+      for (const message of renderState.currentFrame ?? []) {
+        if (message.topic === "/robot_status") {
+          const data = message.message as { data?: string };
+
+          try {
+            const status = JSON.parse(data.data ?? "{}");
+
+            if (typeof status.current_action === "string") {
+              setCurrentAction(status.current_action);
+
+              const action = status.current_action.toLowerCase();
+
+              const arrived =
+                action.includes("i have arrived at") ||
+                action.startsWith("arrived at");
+
+              if (arrived) {
+                activeCommandRef.current = null;
+
+                const nextCommand = commandQueueRef.current.shift();
+
+                setQueue([...commandQueueRef.current]);
+
+                if (nextCommand && context.publish) {
+                  activeCommandRef.current = nextCommand;
+
+                  context.publish("/user_command", {
+                    data: nextCommand,
+                  });
+
+                  setLastCommand(nextCommand);
+                }
+              }
+            }
+
+            if (Array.isArray(status.queue)) {
+              // Queue is managed by this panel.
+            }
+
+            if (typeof status.error === "string") {
+              setStatusError(status.error);
+            }
+          } catch (error) {
+            console.error("Invalid robot status:", error);
+          }
+        }
+
+        if (message.topic === "/parsed_command") {
+          const data = message.message as { data?: string };
+
+          try {
+            const parsed = JSON.parse(data.data ?? "{}");
+            setParsedAction(JSON.stringify(parsed));
+          } catch {
+            setParsedAction(data.data ?? "{ invalid }");
+          }
+        }
+      }
+
+      done();
+    };
+
+    return () => {
+      context.onRender = undefined;
+    };
+  }, [context]);
 
   const startVoiceCommand = async () => {
     if (isRecording) {
@@ -56,9 +127,12 @@ function ExamplePanel({ context }: Props): ReactElement {
         setIsRecording(false);
         stream.getTracks().forEach((track) => track.stop());
 
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: mediaRecorder.mimeType,
-        });
+        const audioBlob = new Blob(
+          audioChunksRef.current,
+          {
+            type: mediaRecorder.mimeType,
+          }
+        );
 
         try {
           const response = await fetch(
@@ -69,11 +143,13 @@ function ExamplePanel({ context }: Props): ReactElement {
                 "Content-Type": "audio/wav",
               },
               body: audioBlob,
-            },
+            }
           );
 
           if (!response.ok) {
-            throw new Error(`Whisper server error: ${response.status}`);
+            throw new Error(
+              `Whisper server error: ${response.status}`
+            );
           }
 
           const result = await response.json();
@@ -88,15 +164,21 @@ function ExamplePanel({ context }: Props): ReactElement {
             setCommand(text);
             setLastCommand(text);
           }
-
-          console.log("Whisper result:", result);
         } catch (error) {
-          console.error("Whisper transcription failed:", error);
+          console.error(
+            "Whisper transcription failed:",
+            error
+          );
+
+          setVoiceError(
+            error instanceof Error
+              ? error.message
+              : String(error)
+          );
         }
       };
 
       mediaRecorder.start();
-      setIsRecording(true);
 
       setTimeout(() => {
         if (mediaRecorder.state === "recording") {
@@ -105,10 +187,17 @@ function ExamplePanel({ context }: Props): ReactElement {
       }, 5000);
 
     } catch (error) {
-      console.error("Microphone access failed:", error);
+      console.error(
+        "Microphone access failed:",
+        error
+      );
+
       setIsRecording(false);
+
       setVoiceError(
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error
+          ? error.message
+          : String(error)
       );
     }
   };
@@ -121,15 +210,33 @@ function ExamplePanel({ context }: Props): ReactElement {
     }
 
     if (!context.publish) {
-      console.error("Foxglove publishing is not available.");
+      console.error(
+        "Foxglove publishing is not available."
+      );
       return;
     }
 
-    context.publish("/user_command", {
-      data: trimmedCommand,
-    });
+    if (!activeCommandRef.current) {
+      activeCommandRef.current = trimmedCommand;
 
+      context.publish("/user_command", {
+        data: trimmedCommand,
+      });
+
+      setLastCommand(trimmedCommand);
+      setCommand("");
+      return;
+    }
+
+    commandQueueRef.current.push(trimmedCommand);
+    setQueue([...commandQueueRef.current]);
     setLastCommand(trimmedCommand);
+    setCommand("");
+  };
+
+  const removeQueuedCommand = (index: number) => {
+    commandQueueRef.current.splice(index, 1);
+    setQueue([...commandQueueRef.current]);
   };
 
   return (
@@ -142,8 +249,9 @@ function ExamplePanel({ context }: Props): ReactElement {
         overflowY: "auto",
       }}
     >
+
       {/* Header */}
-      <div style={{ marginBottom: "16px" }}>
+      <div style={{ marginBottom: "18px" }}>
         <div
           style={{
             fontSize: "22px",
@@ -164,36 +272,251 @@ function ExamplePanel({ context }: Props): ReactElement {
         </div>
       </div>
 
-      {/* Robot Status */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 12px",
-          marginBottom: "18px",
-          borderRadius: "9px",
-          border: "1px solid rgba(128,128,128,0.3)",
-        }}
-      >
-        <span
+      {/* Live Status */}
+      <div style={{ marginBottom: "18px" }}>
+        <div
           style={{
-            fontSize: "11px",
-            opacity: 0.6,
-            fontWeight: 600,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "8px",
           }}
         >
-          ROBOT STATUS
-        </span>
+          <div
+            style={{
+              fontSize: "15px",
+              fontWeight: 700,
+            }}
+          >
+            📡 Live Status
+          </div>
 
-        <span
+          <div
+            style={{
+              fontSize: "11px",
+              padding: "4px 8px",
+              borderRadius: "10px",
+              background: "rgba(80,180,100,0.12)",
+              opacity: 0.8,
+            }}
+          >
+            ● LIVE
+          </div>
+        </div>
+
+        <div
           style={{
-            fontSize: "13px",
-            fontWeight: 600,
+            padding: "14px",
+            borderRadius: "10px",
+            border: "1px solid rgba(128,128,128,0.25)",
+            background: "rgba(128,128,128,0.05)",
           }}
         >
-          🟢 Ready
-        </span>
+          {/* Current Action */}
+          <div
+            style={{
+              paddingBottom: "12px",
+              marginBottom: "12px",
+              borderBottom: "1px solid rgba(128,128,128,0.18)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "10px",
+                fontWeight: 600,
+                letterSpacing: "0.7px",
+                opacity: 0.5,
+                marginBottom: "5px",
+              }}
+            >
+              CURRENT ACTION
+            </div>
+
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: 600,
+                wordBreak: "break-word",
+              }}
+            >
+              {currentAction}
+            </div>
+          </div>
+
+          {/* Queue */}
+          <div
+            style={{
+              paddingBottom: "12px",
+              marginBottom: "12px",
+              borderBottom: "1px solid rgba(128,128,128,0.18)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginBottom: "7px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  letterSpacing: "0.7px",
+                  opacity: 0.5,
+                }}
+              >
+                QUEUE
+              </div>
+
+              <div
+                style={{
+                  fontSize: "11px",
+                  opacity: 0.55,
+                }}
+              >
+                {queue.length} pending
+              </div>
+            </div>
+
+            {queue.length > 0 ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                }}
+              >
+                {queue.map((item, index) => (
+                  <div
+                    key={`${item}-${index}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "9px",
+                      padding: "8px",
+                      borderRadius: "7px",
+                      background: "rgba(128,128,128,0.08)",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "20px",
+                        height: "20px",
+                        minWidth: "20px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        borderRadius: "50%",
+                        background: "rgba(128,128,128,0.15)",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {index + 1}
+                    </div>
+
+                    <div
+                      style={{
+                        flex: 1,
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {item}
+                    </div>
+
+                    <button
+                      onClick={() => removeQueuedCommand(index)}
+                      title="Remove from queue"
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        fontSize: "13px",
+                        padding: "3px 5px",
+                        opacity: 0.55,
+                      }}
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div
+                style={{
+                  padding: "8px",
+                  borderRadius: "7px",
+                  background: "rgba(128,128,128,0.06)",
+                  textAlign: "center",
+                  fontSize: "12px",
+                  opacity: 0.5,
+                }}
+              >
+                Queue is empty
+              </div>
+            )}
+          </div>
+
+          {/* Error / Battery */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "8px",
+            }}
+          >
+            <div
+              style={{
+                padding: "9px",
+                borderRadius: "7px",
+                background: "rgba(128,128,128,0.07)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "10px",
+                  opacity: 0.5,
+                  marginBottom: "3px",
+                }}
+              >
+                ERROR
+              </div>
+
+              <div
+                style={{
+                  fontSize: "12px",
+                  wordBreak: "break-word",
+                }}
+              >
+                {statusError || "None"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "9px",
+                borderRadius: "7px",
+                background: "rgba(128,128,128,0.07)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "10px",
+                  opacity: 0.5,
+                  marginBottom: "3px",
+                }}
+              >
+                BATTERY
+              </div>
+
+              <div style={{ fontSize: "12px" }}>
+                N/A
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Command */}
@@ -210,9 +533,14 @@ function ExamplePanel({ context }: Props): ReactElement {
 
         <textarea
           value={command}
-          onChange={(event) => setCommand(event.target.value)}
+          onChange={(event) =>
+            setCommand(event.target.value)
+          }
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey
+            ) {
               event.preventDefault();
               sendCommand();
             }
@@ -225,13 +553,26 @@ function ExamplePanel({ context }: Props): ReactElement {
             resize: "vertical",
             padding: "12px",
             borderRadius: "9px",
-            border: "1px solid rgba(128,128,128,0.4)",
+            border:
+              "1px solid rgba(128,128,128,0.4)",
             background: "transparent",
             fontSize: "14px",
             fontFamily: "inherit",
             outline: "none",
           }}
         />
+
+        {voiceError && (
+          <div
+            style={{
+              marginTop: "8px",
+              fontSize: "12px",
+              color: "red",
+            }}
+          >
+            Microphone error: {voiceError}
+          </div>
+        )}
 
         <div
           style={{
@@ -240,32 +581,25 @@ function ExamplePanel({ context }: Props): ReactElement {
             marginTop: "8px",
           }}
         >
-          {voiceError && (
-            <div
-              style={{
-                marginTop: "8px",
-                fontSize: "12px",
-                color: "red",
-              }}
-            >
-              Microphone error: {voiceError}
-            </div>
-          )}
-
           <button
             onClick={startVoiceCommand}
             disabled={isRecording}
             style={{
               padding: "10px 14px",
               borderRadius: "8px",
-              border: "1px solid rgba(128,128,128,0.35)",
+              border:
+                "1px solid rgba(128,128,128,0.35)",
               background: "transparent",
-              cursor: isRecording ? "default" : "pointer",
+              cursor: isRecording
+                ? "default"
+                : "pointer",
               fontSize: "13px",
               opacity: isRecording ? 0.6 : 1,
             }}
           >
-            {isRecording ? "🎙️ Listening..." : "🎤 Voice"}
+            {isRecording
+              ? "🎙️ Listening..."
+              : "🎤 Voice"}
           </button>
 
           <button
@@ -276,7 +610,9 @@ function ExamplePanel({ context }: Props): ReactElement {
               padding: "10px",
               borderRadius: "8px",
               border: "none",
-              cursor: command.trim() ? "pointer" : "default",
+              cursor: command.trim()
+                ? "pointer"
+                : "default",
               fontSize: "13px",
               fontWeight: 600,
               opacity: command.trim() ? 1 : 0.5,
@@ -284,45 +620,6 @@ function ExamplePanel({ context }: Props): ReactElement {
           >
             ➤ Send Command
           </button>
-        </div>
-      </div>
-
-      {/* Quick Commands */}
-      <div style={{ marginBottom: "18px" }}>
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            marginBottom: "8px",
-          }}
-        >
-          ⚡ Quick Commands
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, 1fr)",
-            gap: "6px",
-          }}
-        >
-          {quickCommands.map((item) => (
-            <button
-              key={item.label}
-              onClick={() => setCommand(item.label)}
-              style={{
-                padding: "9px 4px",
-                borderRadius: "7px",
-                border: "1px solid rgba(128,128,128,0.3)",
-                background: "transparent",
-                cursor: "pointer",
-                fontSize: "11px",
-              }}
-            >
-              <div style={{ fontSize: "15px" }}>{item.icon}</div>
-              <div style={{ marginTop: "3px" }}>{item.label}</div>
-            </button>
-          ))}
         </div>
       </div>
 
@@ -342,13 +639,15 @@ function ExamplePanel({ context }: Props): ReactElement {
           style={{
             padding: "11px 12px",
             borderRadius: "8px",
-            border: "1px solid rgba(128,128,128,0.25)",
+            border:
+              "1px solid rgba(128,128,128,0.25)",
             minHeight: "18px",
             fontSize: "13px",
             opacity: lastCommand ? 1 : 0.5,
           }}
         >
-          {lastCommand || "No command sent yet."}
+          {lastCommand ||
+            "No command sent yet."}
         </div>
       </div>
 
@@ -368,54 +667,18 @@ function ExamplePanel({ context }: Props): ReactElement {
           style={{
             padding: "12px",
             borderRadius: "8px",
-            border: "1px solid rgba(128,128,128,0.25)",
+            border:
+              "1px solid rgba(128,128,128,0.25)",
             fontFamily: "monospace",
             fontSize: "12px",
-            opacity: 0.6,
+            opacity: 0.8,
+            wordBreak: "break-word",
           }}
         >
-          {"{ action: waiting }"}
+          {parsedAction}
         </div>
       </div>
 
-      {/* Examples */}
-      <div>
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            marginBottom: "8px",
-          }}
-        >
-          💡 Examples
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "5px",
-          }}
-        >
-          {exampleCommands.map((example) => (
-            <button
-              key={example}
-              onClick={() => setCommand(example)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: "7px",
-                border: "1px solid rgba(128,128,128,0.2)",
-                background: "transparent",
-                cursor: "pointer",
-                textAlign: "left",
-                fontSize: "12px",
-              }}
-            >
-              "{example}"
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -428,9 +691,13 @@ export function initExamplePanel(
     "std_msgs/String",
   );
 
-  const root = createRoot(context.panelElement);
+  const root = createRoot(
+    context.panelElement
+  );
 
-  root.render(<ExamplePanel context={context} />);
+  root.render(
+    <ExamplePanel context={context} />
+  );
 
   return () => {
     root.unmount();

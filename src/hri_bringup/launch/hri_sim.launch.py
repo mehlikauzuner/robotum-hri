@@ -124,6 +124,12 @@ def generate_launch_description():
         output='screen'
     )
 
+    robot_status_node = Node(
+        package='robot_status',
+        executable='robot_status',
+        output='screen'
+    )
+
     whisper_server = ExecuteProcess(
         cmd=[
             '/home/mehlika/whisper-env/bin/python',
@@ -172,6 +178,7 @@ def generate_launch_description():
         nlp_node,
         semantic_map_node,
         planner_node,
+        robot_status_node,
         whisper_server,
         tts_node,
         tts_server,
