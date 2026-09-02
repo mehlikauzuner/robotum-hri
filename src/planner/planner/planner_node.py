@@ -4,7 +4,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 
-from std_msgs.msg import String
+from std_msgs.msg import String, Empty
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 import math
@@ -39,6 +39,14 @@ class PlannerNode(Node):
 
         self.current_target = "the destination"
         self.navigation_active = False
+        self.current_goal_handle = None
+
+        self.stop_subscription = self.create_subscription(
+            Empty,
+            "/stop_navigation",
+            self.stop_navigation_callback,
+            10
+        )
 
         # Safe approach distance from semantic object
         self.safe_approach_distance = 0.40
@@ -115,6 +123,32 @@ class PlannerNode(Node):
         self.get_logger().warn(
             f"Unknown action: {action}"
         )
+
+    def stop_navigation_callback(self, msg):
+        if self.current_goal_handle is None:
+            self.get_logger().info("No active navigation goal to cancel.")
+            return
+
+        self.get_logger().info("Stopping navigation...")
+
+        cancel_future = self.current_goal_handle.cancel_goal_async()
+        cancel_future.add_done_callback(self.cancel_done_callback)
+
+    def cancel_done_callback(self, future):
+        try:
+            response = future.result()
+            self.get_logger().info(
+                f"Navigation cancel response: {response}"
+            )
+        except Exception as e:
+            self.get_logger().error(
+                f"Navigation cancel failed: {e}"
+            )
+
+        self.current_goal_handle = None
+        self.navigation_active = False
+
+        self.publish_response("I stopped.")
 
     def publish_response(self, text):
         msg = String()
@@ -205,6 +239,8 @@ class PlannerNode(Node):
                 "Navigation goal was REJECTED."
             )
             return
+
+        self.current_goal_handle = goal_handle
 
         self.get_logger().info(
             "Navigation goal was ACCEPTED."

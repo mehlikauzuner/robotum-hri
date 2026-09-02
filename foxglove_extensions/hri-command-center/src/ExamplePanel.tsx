@@ -25,6 +25,8 @@ function ExamplePanel({ context }: Props): ReactElement {
   const activeCommandRef = useRef<string | null>(null);
 
   useEffect(() => {
+    context.advertise?.("/stop_navigation", "std_msgs/msg/Empty");
+
     context.subscribe([
       { topic: "/robot_status" },
       { topic: "/parsed_command" },
@@ -200,6 +202,20 @@ function ExamplePanel({ context }: Props): ReactElement {
           : String(error)
       );
     }
+  };
+
+  const stopNavigation = () => {
+    if (!context.publish) {
+      console.error("Foxglove publishing is not available.");
+      return;
+    }
+
+    context.publish("/stop_navigation", {});
+
+    activeCommandRef.current = null;
+    commandQueueRef.current = [];
+    setQueue([]);
+    setCurrentAction("I stopped.");
   };
 
   const sendCommand = () => {
@@ -600,6 +616,20 @@ function ExamplePanel({ context }: Props): ReactElement {
             {isRecording
               ? "🎙️ Listening..."
               : "🎤 Voice"}
+          </button>
+
+          <button
+            onClick={stopNavigation}
+            style={{
+              padding: "10px 14px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              fontSize: "13px",
+              fontWeight: 600,
+            }}
+          >
+            ⛔ STOP
           </button>
 
           <button
