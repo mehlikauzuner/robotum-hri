@@ -5,7 +5,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 
 from std_msgs.msg import String, Empty
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
 import math
 from nav2_msgs.action import NavigateToPose
@@ -31,10 +31,22 @@ class PlannerNode(Node):
             10
         )
 
+        self.status_event_publisher = self.create_publisher(
+            String,
+            "/robot_status_event",
+            10
+        )
+
         self.nav_client = ActionClient(
             self,
             NavigateToPose,
             "/navigate_to_pose"
+        )
+
+        self.cmd_vel_publisher = self.create_publisher(
+            TwistStamped,
+            "/cmd_vel_unsafe",
+            10
         )
 
         self.current_target = "the destination"
@@ -51,6 +63,15 @@ class PlannerNode(Node):
         # Safe approach distance from semantic object
         self.safe_approach_distance = 0.30
 
+        # Direct movement settings
+        self.move_distance = 0.20  # meters = 20 cm
+        self.move_speed = 0.15     # m/s
+
+        self.direct_move_active = False
+        self.direct_move_direction = None
+        self.direct_move_start_x = None
+        self.direct_move_start_y = None
+
         # Latest robot position in odom frame
         self.robot_x = None
         self.robot_y = None
@@ -62,9 +83,61 @@ class PlannerNode(Node):
             10
         )
 
+        # Continuously publish direct movement commands while active
+        self.direct_move_timer = self.create_timer(
+            0.05,
+            self.direct_move_control
+        )
+
     def odom_callback(self, msg):
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
+
+
+    def direct_move_control(self):
+        if not self.direct_move_active:
+            return
+
+        if self.robot_x is None or self.robot_y is None:
+            return
+
+        dx = self.robot_x - self.direct_move_start_x
+        dy = self.robot_y - self.direct_move_start_y
+        distance = math.hypot(dx, dy)
+
+        # Stop exactly when the requested distance is reached.
+        if distance >= self.move_distance:
+            stop_msg = TwistStamped()
+            stop_msg.header.stamp = self.get_clock().now().to_msg()
+            stop_msg.header.frame_id = "base_link"
+
+            self.cmd_vel_publisher.publish(stop_msg)
+
+            self.direct_move_active = False
+            self.direct_move_direction = None
+
+            self.publish_response("I completed the movement.")
+            self.publish_status_event(
+                "completed",
+                "Movement completed."
+            )
+            self.get_logger().info(
+                f"Direct movement completed: {distance:.2f} m"
+            )
+            return
+
+        msg = TwistStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+
+        if self.direct_move_direction == "forward":
+            msg.twist.linear.x = self.move_speed
+        elif self.direct_move_direction == "backward":
+            msg.twist.linear.x = -self.move_speed
+        else:
+            return
+
+        self.cmd_vel_publisher.publish(msg)
 
     def command_callback(self, msg):
         command = msg.data.strip()
@@ -119,6 +192,78 @@ class PlannerNode(Node):
             self.send_navigation_goal(goal_x, goal_y, target)
             return
 
+        # Direct movement action
+        if action == "move":
+            direction = data.get("direction")
+
+            if direction not in ["forward", "backward"]:
+                self.get_logger().warn(
+                    f"Unknown movement direction: {direction}"
+                )
+                return
+
+            # Start position for distance measurement
+            if self.robot_x is None or self.robot_y is None:
+                self.get_logger().warn(
+                    "Robot pose not available. Cannot start direct movement."
+                )
+                return
+
+            self.direct_move_active = True
+            self.direct_move_direction = direction
+            self.direct_move_start_x = self.robot_x
+            self.direct_move_start_y = self.robot_y
+
+            msg = TwistStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = "base_link"
+
+            if direction == "forward":
+                msg.twist.linear.x = self.move_speed
+                self.publish_response("Moving forward.")
+                self.publish_status_event(
+                    "running",
+                    "Moving forward."
+                )
+            else:
+                msg.twist.linear.x = -self.move_speed
+                self.publish_response("Moving backward.")
+                self.publish_status_event(
+                    "running",
+                    "Moving backward."
+                )
+
+            self.cmd_vel_publisher.publish(msg)
+
+            self.get_logger().info(
+                f"Moving {direction} for {self.move_distance:.2f} m."
+            )
+            return
+
+        # Direct rotation action
+        if action == "rotate":
+            direction = data.get("direction")
+
+            msg = TwistStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = "base_link"
+
+            if direction == "left":
+                msg.twist.angular.z = 0.5
+            elif direction == "right":
+                msg.twist.angular.z = -0.5
+            else:
+                self.get_logger().warn(
+                    f"Unknown rotation direction: {direction}"
+                )
+                return
+
+            self.cmd_vel_publisher.publish(msg)
+            self.get_logger().info(
+                f"Rotating {direction}."
+            )
+            return
+
         # Unknown action
         self.get_logger().warn(
             f"Unknown action: {action}"
@@ -157,6 +302,20 @@ class PlannerNode(Node):
 
         self.get_logger().info(
             f"Robot response: {text}"
+        )
+
+    def publish_status_event(self, status, current_action, error=""):
+        msg = String()
+        msg.data = json.dumps({
+            "status": status,
+            "current_action": current_action,
+            "error": error,
+        }, separators=(",", ":"))
+
+        self.status_event_publisher.publish(msg)
+
+        self.get_logger().info(
+            f"Status event: {msg.data}"
         )
 
     def calculate_safe_goal(self, target_x, target_y):

@@ -17,6 +17,10 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [statusError, setStatusError] = useState("");
 
   const [parsedAction, setParsedAction] = useState("{ action: waiting }");
+  const [robotResponse, setRobotResponse] = useState("Waiting for response...");
+
+  const [showReplyModal, setShowReplyModal] = useState(false);
+  const [reply, setReply] = useState("");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -24,12 +28,36 @@ function ExamplePanel({ context }: Props): ReactElement {
   const commandQueueRef = useRef<string[]>([]);
   const activeCommandRef = useRef<string | null>(null);
 
+  const processNextCommand = () => {
+    if (!context.publish) {
+      return;
+    }
+
+    const nextCommand = commandQueueRef.current.shift();
+
+    setQueue([...commandQueueRef.current]);
+
+    if (!nextCommand) {
+      activeCommandRef.current = null;
+      return;
+    }
+
+    activeCommandRef.current = nextCommand;
+
+    context.publish("/user_command", {
+      data: nextCommand,
+    });
+
+    setLastCommand(nextCommand);
+  };
+
   useEffect(() => {
     context.advertise?.("/stop_navigation", "std_msgs/msg/Empty");
 
     context.subscribe([
       { topic: "/robot_status" },
       { topic: "/parsed_command" },
+      { topic: "/robot_response" },
     ]);
 
     context.watch("currentFrame");
@@ -42,35 +70,19 @@ function ExamplePanel({ context }: Props): ReactElement {
           try {
             const status = JSON.parse(data.data ?? "{}");
 
+            console.log("ROBOT STATUS RECEIVED:", status);
+
             if (typeof status.current_action === "string") {
               setCurrentAction(status.current_action);
+            }
 
-              const action = status.current_action.toLowerCase();
-
-              const arrived =
-                action.includes("i have arrived at") ||
-                action.startsWith("arrived at");
-
-              const failed =
-                action.includes("i could not reach");
-
-              if (arrived || failed) {
-                activeCommandRef.current = null;
-
-                const nextCommand = commandQueueRef.current.shift();
-
-                setQueue([...commandQueueRef.current]);
-
-                if (nextCommand && context.publish) {
-                  activeCommandRef.current = nextCommand;
-
-                  context.publish("/user_command", {
-                    data: nextCommand,
-                  });
-
-                  setLastCommand(nextCommand);
-                }
-              }
+            // Queue progression is based on structured status,
+            // not on the wording of the robot response.
+            if (
+              status.status === "completed" ||
+              status.status === "failed"
+            ) {
+              processNextCommand();
             }
 
             if (Array.isArray(status.queue)) {
@@ -93,6 +105,19 @@ function ExamplePanel({ context }: Props): ReactElement {
             setParsedAction(JSON.stringify(parsed));
           } catch {
             setParsedAction(data.data ?? "{ invalid }");
+          }
+        }
+
+        if (message.topic === "/robot_response") {
+          const data = message.message as { data?: string };
+          const response = data.data ?? "";
+
+          setRobotResponse(response);
+
+          if (
+            response.toLowerCase().includes("which target do you mean")
+          ) {
+            activeCommandRef.current = null;
           }
         }
       }
@@ -684,6 +709,62 @@ function ExamplePanel({ context }: Props): ReactElement {
         </div>
       </div>
 
+      {/* Robot Response */}
+      <div style={{ marginBottom: "18px" }}>
+        <div
+          style={{
+            fontSize: "14px",
+            fontWeight: 600,
+            marginBottom: "8px",
+          }}
+        >
+          🤖 Robot Response
+        </div>
+
+        <div
+          style={{
+            padding: "11px 12px",
+            borderRadius: "8px",
+            border:
+              "1px solid rgba(128,128,128,0.25)",
+            minHeight: "18px",
+            fontSize: "13px",
+            opacity: robotResponse ? 1 : 0.5,
+            wordBreak: "break-word",
+          }}
+        >
+          <div>{robotResponse}</div>
+
+          {robotResponse &&
+            robotResponse !== "Waiting for response..." && (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  marginTop: "10px",
+                }}
+              >
+                <button
+                  onClick={() => {
+                    setReply("");
+                    setShowReplyModal(true);
+                  }}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: "7px",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  }}
+                >
+                  ↩ Reply
+                </button>
+              </div>
+            )}
+        </div>
+      </div>
+
       {/* Parsed Action */}
       <div style={{ marginBottom: "18px" }}>
         <div
@@ -711,6 +792,135 @@ function ExamplePanel({ context }: Props): ReactElement {
           {parsedAction}
         </div>
       </div>
+
+      {/* Reply Modal */}
+      {showReplyModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "430px",
+              background: "var(--panel-background, white)",
+              borderRadius: "12px",
+              padding: "20px",
+              boxSizing: "border-box",
+              boxShadow: "0 8px 30px rgba(0, 0, 0, 0.25)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "16px",
+                fontWeight: 600,
+                marginBottom: "14px",
+              }}
+            >
+              ↩ Reply to Robot
+            </div>
+
+            <div
+              style={{
+                fontSize: "13px",
+                marginBottom: "12px",
+                opacity: 0.8,
+              }}
+            >
+              {robotResponse}
+            </div>
+
+            <textarea
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              placeholder="Type your answer..."
+              rows={3}
+              autoFocus
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                resize: "vertical",
+                padding: "10px",
+                borderRadius: "8px",
+                border:
+                  "1px solid rgba(128,128,128,0.4)",
+                background: "transparent",
+                fontSize: "13px",
+                fontFamily: "inherit",
+                outline: "none",
+                marginBottom: "12px",
+              }}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "8px",
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowReplyModal(false);
+                  setReply("");
+                }}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "7px",
+                  border:
+                    "1px solid rgba(128,128,128,0.35)",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => {
+                  const trimmedReply = reply.trim();
+
+                  if (!trimmedReply || !context.publish) {
+                    return;
+                  }
+
+                  activeCommandRef.current = trimmedReply;
+
+                  context.publish("/user_command", {
+                    data: trimmedReply,
+                  });
+
+                  setLastCommand(trimmedReply);
+                  setReply("");
+                  setShowReplyModal(false);
+                }}
+                disabled={!reply.trim()}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "7px",
+                  border: "none",
+                  cursor: reply.trim()
+                    ? "pointer"
+                    : "default",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  opacity: reply.trim() ? 1 : 0.5,
+                }}
+              >
+                Send Reply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

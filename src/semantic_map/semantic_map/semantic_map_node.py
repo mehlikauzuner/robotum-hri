@@ -44,6 +44,20 @@ class SemanticMapNode(Node):
             self.get_logger().warning("Invalid JSON command.")
             return
 
+        # Direct movement/rotation commands
+        # These are passed through without changing the existing
+        # navigation behavior.
+        if data.get("action") in ["move", "rotate"]:
+            output = String()
+            output.data = msg.data
+            self.publisher.publish(output)
+
+            self.get_logger().info(
+                f"Direct command -> {msg.data}"
+            )
+            return
+
+        # Existing navigation logic
         target = data.get("target")
 
         if target is None:
