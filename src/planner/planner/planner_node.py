@@ -416,6 +416,7 @@ class PlannerNode(Node):
         result = future.result()
 
         self.navigation_active = False
+        self.current_goal_handle = None
 
         self.get_logger().info(
             f"Navigation finished with status: "
@@ -427,12 +428,24 @@ class PlannerNode(Node):
         )
 
         if result.status == 4:
-            self.publish_response(
-                f"I have arrived at {target}."
+            response = f"I have arrived at {target}."
+
+            self.publish_response(response)
+
+            self.publish_status_event(
+                "completed",
+                response
             )
+
         else:
-            self.publish_response(
-                f"I could not reach {self.current_target}."
+            response = f"I could not reach {target}."
+
+            self.publish_response(response)
+
+            self.publish_status_event(
+                "failed",
+                response,
+                f"Navigation failed with status {result.status}."
             )
 
     def feedback_callback(self, feedback_msg):

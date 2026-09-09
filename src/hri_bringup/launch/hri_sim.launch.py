@@ -35,6 +35,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             'use_sim_time': 'true',
+            'autostart': 'true',
             'slam_params_file': os.path.join(
                 hri_bringup,
                 'config',

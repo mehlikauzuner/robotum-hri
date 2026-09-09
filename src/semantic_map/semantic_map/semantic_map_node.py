@@ -63,11 +63,16 @@ class SemanticMapNode(Node):
         if target is None:
             return
 
-        if target not in self.objects:
+        target_key = next(
+            (name for name in self.objects if name.lower() == target.lower()),
+            None
+        )
+
+        if target_key is None:
             self.get_logger().warning(f"Unknown target: {target}")
             return
 
-        obj = self.objects[target]
+        obj = self.objects[target_key]
 
         output = String()
         output.data = json.dumps({

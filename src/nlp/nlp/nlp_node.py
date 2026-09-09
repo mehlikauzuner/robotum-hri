@@ -1,5 +1,6 @@
 import json
 import urllib.request
+import threading
 
 import rclpy
 from rclpy.node import Node
@@ -50,6 +51,13 @@ class NLPNode(Node):
             f"Received command: {command}"
         )
 
+        threading.Thread(
+            target=self.process_command,
+            args=(command,),
+            daemon=True
+        ).start()
+
+    def process_command(self, command):
         context_text = ""
 
         if self.pending_context is not None:
@@ -70,119 +78,28 @@ class NLPNode(Node):
             )
 
         prompt = (
-            "You are the NLP and dialogue system of a mobile robot. "
-            "Your task is to understand the user's intention and return "
-            "ONLY ONE valid JSON object. "
-
-            "AVAILABLE NAVIGATION TARGETS: "
-            "home, tree, car, Eren, Mehlika, school, hospital, market, park. "
-
-            "There are THREE possible statuses: valid, invalid, clarification. "
-
-            "IMPORTANT DECISION RULES: "
-
-            "1. VALID: "
-            "Use valid when the user clearly specifies an available target "
-            "or a supported robot action. "
-
-            "Examples: "
-            "'Go to hospital' -> "
-            '{"status":"valid","action":"navigate","target":"hospital"}. '
-            "'Go to the park' -> "
-            '{"status":"valid","action":"navigate","target":"park"}. '
-            "'Move forward' -> "
-            '{"status":"valid","action":"move","direction":"forward"}. '
-            "'Turn left' -> "
-            '{"status":"valid","action":"rotate","direction":"left"}. '
-            "'Stop' -> "
-            '{"status":"valid","action":"stop"}. '
-
-            "2. INVALID: "
-            "Use invalid ONLY when the user clearly specifies a particular "
-            "destination or action, but that destination or action is not "
-            "available or supported. "
-
-            "Examples: "
-            "'Go to airport' -> "
-            '{"status":"invalid","response":"I cannot go to the airport because it is not available on my map."}. '
-            "'Go to the airport' -> invalid. "
-            "'Go to the beach' -> invalid. "
-
-            "3. CLARIFICATION: "
-            "Use clarification when the user's intended target or action "
-            "is NOT clear enough to determine what they want. "
-            "Generic words are NOT target names. "
-            "Words such as obstacle, place, destination, location, "
-            "there, somewhere, or here do NOT identify a specific target. "
-
-            "Examples: "
-            "'Go to the obstacle' -> clarification. "
-            "'Go there' -> clarification. "
-            "'Go to the place' -> clarification. "
-            "'Take me there' -> clarification. "
-            "'Go somewhere' -> clarification. "
-
-            "For clarification, ask the user which target they mean. "
-            "Example response: "
-            '{"status":"clarification","response":"Which target do you mean?"}. '
-
-            "VERY IMPORTANT: "
-            "The word 'obstacle' is NOT an unavailable destination. "
-            "It is a generic description and therefore MUST produce "
-            "clarification, NOT invalid. "
-
-            "CONTEXT RULE: "
-            "When previous dialogue context contains a clarification "
-            "question asking which target the user means, the CURRENT "
-            "user message is the answer to that question. "
-
-            "If the answer is one of the available navigation targets, "
-            "return valid navigation to that target. "
-
-            "If the answer is a specific destination name but it is NOT "
-            "one of the available navigation targets, return invalid. "
-            "Do NOT ask for clarification again. "
-
-            "If the answer is generic or non-specific, such as "
-            "there, somewhere, place, location, destination, or obstacle, "
-            "return clarification. "
-
-            "IMPORTANT: 'party' is a specific destination name. "
-            "Since 'party' is not an available navigation target, "
-            "return invalid, NOT clarification. "
-
-            "For example: "
-            "Previous request: 'Go there.' "
-            "Assistant: 'Which target do you mean?' "
-            "User: 'tree' "
-            "-> "
-            '{"status":"valid","action":"navigate","target":"tree"}. '
-
-            "For valid navigation use: "
+            "Extract the user's action and target. Return JSON only. "
+            "Navigation: "
             '{"status":"valid","action":"navigate","target":"TARGET"}. '
-
-            "For valid movement use: "
-            '{"status":"valid","action":"move","direction":"forward|backward"}, '
-            '{"status":"valid","action":"rotate","direction":"left|right"}, '
+            "Forward: "
+            '{"status":"valid","action":"move","direction":"forward"}. '
+            "Backward: "
+            '{"status":"valid","action":"move","direction":"backward"}. '
+            "Left rotation: "
+            '{"status":"valid","action":"rotate","direction":"left"}. '
+            "Right rotation: "
+            '{"status":"valid","action":"rotate","direction":"right"}. '
+            "Stop: "
             '{"status":"valid","action":"stop"}. '
-
-            "For invalid requests use: "
-            '{"status":"invalid","response":"short explanation to the user"}. '
-
-            "For ambiguous requests use: "
-            '{"status":"clarification","response":"short question asking the user for clarification"}. '
-
-            "Never invent a target. "
-            "Never invent coordinates. "
-            "Return JSON only. "
-            "Do not return markdown or explanations outside the JSON. "
-
+            "For navigation, extract the target exactly as stated. "
+            "The target may be any person, object, place, or location. "
+            "Do not check whether the target exists and never invent coordinates. "
+            'If the target is unclear, return '
+            '{"status":"clarification","response":"Which target do you mean?"}. '
+            "If previous dialogue context exists, interpret the current message "
+            "as the answer to the clarification. "
             f"{context_text}"
-            f"CURRENT USER COMMAND: {command}"
-        )
-
-        self.get_logger().info(
-            f"Prompt length: {len(prompt)} characters"
+            f"USER: {command}"
         )
 
         payload = json.dumps({
