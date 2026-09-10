@@ -3,12 +3,19 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, IncludeLaunchDescription, TimerAction
+from launch.actions import ExecuteProcess, IncludeLaunchDescription, TimerAction, DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import PythonExpression
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    declare_mode = DeclareLaunchArgument('mode', default_value='mapping')
+    declare_environment = DeclareLaunchArgument('environment', default_value='test_environment')
+    mode = LaunchConfiguration('mode')
+    environment = LaunchConfiguration('environment')
 
     turtlebot3_gazebo = get_package_share_directory('turtlebot3_gazebo')
     slam_toolbox = get_package_share_directory('slam_toolbox')
@@ -41,6 +48,25 @@ def generate_launch_description():
                 'config',
                 'mapper_params_hri.yaml'
             )
+        }.items()
+    )
+
+    environment_map = PathJoinSubstitution([
+        "/home/mehlika/robotum-hri-github/environments",
+        environment,
+        "map.yaml"
+    ])
+
+    localization_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                hri_bringup,
+                'launch',
+                'hri_localization.launch.py'
+            )
+        ),
+        launch_arguments={
+            'map': environment_map,
         }.items()
     )
 
@@ -154,13 +180,24 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        declare_mode,
+        declare_environment,
 
         gazebo_launch,
 
         TimerAction(
             period=5.0,
+            condition=IfCondition(PythonExpression(["'", mode, "' == 'mapping'"])),
             actions=[
                 slam_launch
+            ]
+        ),
+
+        TimerAction(
+            period=5.0,
+            condition=IfCondition(PythonExpression(["'", mode, "' == 'localization'"])),
+            actions=[
+                localization_launch
             ]
         ),
 

@@ -16,7 +16,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LoadComposableNodes, Node, PushROSNamespace, SetParameter
@@ -276,15 +276,21 @@ def generate_launch_description() -> LaunchDescription:
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings,
             ),
-            Node(
-                package='nav2_lifecycle_manager',
-                executable='lifecycle_manager',
-                name='lifecycle_manager_navigation',
-                output='screen',
-                arguments=['--ros-args', '--log-level', log_level],
-                parameters=[
-                    configured_params,
-                    {'autostart': autostart}, {'node_names': lifecycle_nodes}
+            TimerAction(
+                period=5.0,
+                actions=[
+                    Node(
+                        package='nav2_lifecycle_manager',
+                        executable='lifecycle_manager',
+                        name='lifecycle_manager_navigation',
+                        output='screen',
+                        arguments=['--ros-args', '--log-level', log_level],
+                        parameters=[
+                            configured_params,
+                            {'autostart': autostart},
+                            {'node_names': lifecycle_nodes}
+                        ],
+                    ),
                 ],
             ),
         ],
