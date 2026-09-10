@@ -5,7 +5,7 @@ import re
 import rclpy
 from rclpy.node import Node
 from slam_toolbox.srv import SaveMap
-from environment_manager_interfaces.srv import SelectEnvironment
+from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment
 from nav2_msgs.srv import LoadMap
 
 
@@ -61,6 +61,12 @@ class EnvironmentManager(Node):
             self.handle_select_environment
         )
 
+        self.save_environment_service = self.create_service(
+            SaveEnvironment,
+            '/save_environment',
+            self.handle_save_environment
+        )
+
         self.load_map_client = self.create_client(
             LoadMap,
             '/map_server/load_map'
@@ -110,6 +116,30 @@ class EnvironmentManager(Node):
                     )
         else:
             self.get_logger().info('No environments found.')
+
+
+    def handle_save_environment(self, request, response):
+        future = self.save_environment(request.environment_name)
+
+        if future is None:
+            response.success = False
+            response.message = (
+                f'Failed to start saving environment: '
+                f'{request.environment_name}'
+            )
+            return response
+
+        response.success = True
+        response.message = (
+            f'Environment map saving started: '
+            f'{request.environment_name}'
+        )
+
+        future.add_done_callback(
+            self.handle_map_save_result
+        )
+
+        return response
 
 
     def handle_select_environment(self, request, response):
@@ -188,6 +218,26 @@ class EnvironmentManager(Node):
         except Exception as error:
             self.get_logger().error(
                 f'Map load request failed: {error}'
+            )
+
+
+    def handle_map_save_result(self, future):
+        try:
+            result = future.result()
+
+            if result.result == 0:
+                self.get_logger().info(
+                    'Environment map saved successfully.'
+                )
+            else:
+                self.get_logger().error(
+                    f'Environment map save failed. '
+                    f'Result code: {result.result}'
+                )
+
+        except Exception as error:
+            self.get_logger().error(
+                f'Environment map save request failed: {error}'
             )
 
 
