@@ -21,6 +21,7 @@ setup(
     entry_points={
         "console_scripts": [
             "semantic_map_node = semantic_map.semantic_map_node:main",
+            "obstacle_markers = semantic_map.obstacle_markers:main",
         ],
     },
 )

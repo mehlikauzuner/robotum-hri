@@ -14,19 +14,46 @@ class ObstacleMarkers(Node):
             10
         )
 
-        self.objects = {
-            "engel_1": {"x": 0.928, "y": 1.561},
-            "engel_2": {"x": 2.017, "y": 1.556},
-            "engel_3": {"x": 3.099, "y": 1.550},
-            "engel_4": {"x": 0.933, "y": 0.521},
-            "engel_5": {"x": 2.029, "y": 0.512},
-            "engel_6": {"x": 3.127, "y": 0.514},
-            "engel_7": {"x": 0.928, "y": -0.533},
-            "engel_8": {"x": 2.022, "y": -0.535},
-            "engel_9": {"x": 3.093, "y": -0.523},
-        }
+        self.semantic_map_path = (
+            "/home/mehlika/robotum-hri-github/"
+            "environments/test_environment/semantic_map.json"
+        )
+
+        self.objects = self.load_semantic_map()
 
         self.timer = self.create_timer(1.0, self.publish_markers)
+
+    def load_semantic_map(self):
+        try:
+            import json
+
+            with open(self.semantic_map_path, "r") as f:
+                data = json.load(f)
+
+            objects = {}
+
+            for obj in data.get("objects", []):
+                name = obj.get("name")
+
+                if not name:
+                    continue
+
+                objects[name] = {
+                    "x": obj["x"],
+                    "y": obj["y"]
+                }
+
+            self.get_logger().info(
+                f"Loaded {len(objects)} semantic objects."
+            )
+
+            return objects
+
+        except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+            self.get_logger().error(
+                f"Failed to load semantic map: {e}"
+            )
+            return {}
 
     def publish_markers(self):
         marker_array = MarkerArray()

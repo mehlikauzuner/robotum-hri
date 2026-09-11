@@ -276,23 +276,18 @@ def generate_launch_description() -> LaunchDescription:
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings,
             ),
-            TimerAction(
-                period=5.0,
-                actions=[
-                    Node(
-                        package='nav2_lifecycle_manager',
-                        executable='lifecycle_manager',
-                        name='lifecycle_manager_navigation',
-                        output='screen',
-                        arguments=['--ros-args', '--log-level', log_level],
-                        parameters=[
-                            configured_params,
-                            {'autostart': autostart},
-                            {'node_names': lifecycle_nodes}
-                        ],
-                    ),
+            Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='lifecycle_manager_navigation',
+                output='screen',
+                arguments=['--ros-args', '--log-level', log_level],
+                parameters=[
+                    configured_params,
+                    {'autostart': autostart},
+                    {'node_names': lifecycle_nodes}
                 ],
-            ),
+            )
         ],
     )
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+from functools import partial
 import json
 import re
 
@@ -136,7 +137,10 @@ class EnvironmentManager(Node):
         )
 
         future.add_done_callback(
-            self.handle_map_save_result
+            partial(
+                self.handle_map_save_result,
+                request.environment_name
+            )
         )
 
         return response
@@ -221,13 +225,48 @@ class EnvironmentManager(Node):
             )
 
 
-    def handle_map_save_result(self, future):
+    def handle_map_save_result(self, environment_name, future):
         try:
             result = future.result()
 
             if result.result == 0:
                 self.get_logger().info(
                     'Environment map saved successfully.'
+                )
+
+                environment_dir = (
+                    self.environments_dir / environment_name
+                )
+
+                metadata = {
+                    "name": environment_name,
+                    "type": "room",
+                    "room": environment_name,
+                    "map": "map.yaml",
+                    "semantic_map": "semantic_map.json"
+                }
+
+                metadata_path = environment_dir / "metadata.json"
+
+                with metadata_path.open("w", encoding="utf-8") as file:
+                    json.dump(metadata, file, indent=2)
+                    file.write("\n")
+
+                semantic_map = {
+                    "environment": environment_name,
+                    "objects": []
+                }
+
+                semantic_map_path = (
+                    environment_dir / "semantic_map.json"
+                )
+
+                with semantic_map_path.open("w", encoding="utf-8") as file:
+                    json.dump(semantic_map, file, indent=2)
+                    file.write("\n")
+
+                self.get_logger().info(
+                    f'Environment metadata created: {environment_name}'
                 )
             else:
                 self.get_logger().error(

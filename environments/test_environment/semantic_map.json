@@ -1,4 +1,11 @@
 {
   "environment": "test_environment",
-  "objects": []
+  "objects": [
+    {
+      "name": "dolap",
+      "type": "furniture",
+      "x": 1.0,
+      "y": 1.0
+    }
+  ]
 }

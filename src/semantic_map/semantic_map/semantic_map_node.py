@@ -10,17 +10,12 @@ class SemanticMapNode(Node):
     def __init__(self):
         super().__init__("semantic_map")
 
-        self.objects = {
-            "home": {"x": 0.928, "y": 1.561},
-            "tree": {"x": 2.017, "y": 1.556},
-            "car": {"x": 3.099, "y": 1.550},
-            "Eren": {"x": 0.933, "y": 0.521},
-            "Mehlika": {"x": 2.029, "y": 0.512},
-            "school": {"x": 3.127, "y": 0.514},
-            "hospital": {"x": 0.928, "y": -0.533},
-            "market": {"x": 2.022, "y": -0.535},
-            "park": {"x": 3.093, "y": -0.523},
-        }
+        self.semantic_map_path = (
+            "/home/mehlika/robotum-hri-github/"
+            "environments/test_environment/semantic_map.json"
+        )
+
+        self.objects = self.load_semantic_map()
 
         self.subscription = self.create_subscription(
             String,
@@ -36,6 +31,36 @@ class SemanticMapNode(Node):
         )
 
         self.get_logger().info("Semantic Map Node Started.")
+
+    def load_semantic_map(self):
+        try:
+            with open(self.semantic_map_path, "r") as f:
+                data = json.load(f)
+
+            objects = {}
+
+            for obj in data.get("objects", []):
+                name = obj.get("name")
+
+                if not name:
+                    continue
+
+                objects[name] = {
+                    "x": obj["x"],
+                    "y": obj["y"]
+                }
+
+            self.get_logger().info(
+                f"Loaded {len(objects)} semantic objects."
+            )
+
+            return objects
+
+        except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+            self.get_logger().error(
+                f"Failed to load semantic map: {e}"
+            )
+            return {}
 
     def command_callback(self, msg):
         try:
