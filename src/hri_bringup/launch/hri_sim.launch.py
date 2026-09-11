@@ -89,21 +89,6 @@ def generate_launch_description():
         }.items()
     )
 
-    gz_bridge = Node(
-        package='ros_gz_bridge',
-        parameters=[{'use_sim_time': True}],
-        executable='parameter_bridge',
-        arguments=[
-            '--config',
-            os.path.join(
-                hri_bringup,
-                'config',
-                'bridge.yaml'
-            )
-        ],
-        output='screen'
-    )
-
     foxglove_bridge = Node(
         package='foxglove_bridge',
         executable='foxglove_bridge',
@@ -208,7 +193,6 @@ def generate_launch_description():
             ]
         ),
 
-        gz_bridge,
         foxglove_bridge,
         cmd_vel_converter,
         cmd_vel_mux,
