@@ -314,6 +314,12 @@ class EnvironmentManager(Node):
             f'Saving map for environment: {environment_name}'
         )
 
+        if not self.save_map_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error(
+                '/slam_toolbox/save_map service is not available.'
+            )
+            return None
+
         future = self.save_map_client.call_async(request)
 
         return future
