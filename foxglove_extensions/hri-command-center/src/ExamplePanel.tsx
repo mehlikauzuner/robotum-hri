@@ -22,11 +22,45 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [showReplyModal, setShowReplyModal] = useState(false);
   const [reply, setReply] = useState("");
 
+  const [clickedX, setClickedX] = useState<number | null>(null);
+  const [clickedY, setClickedY] = useState<number | null>(null);
+  const [objectName, setObjectName] = useState("");
+  const [objectType, setObjectType] = useState("furniture");
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const commandQueueRef = useRef<string[]>([]);
   const activeCommandRef = useRef<string | null>(null);
+
+  const saveSemanticObject = async () => {
+    if (!context.callService) {
+      console.error("Foxglove service calls are not available.");
+      return;
+    }
+
+    if (
+      clickedX === null ||
+      clickedY === null ||
+      !objectName.trim()
+    ) {
+      return;
+    }
+
+    try {
+      await context.callService("/add_semantic_object", {
+        name: objectName.trim(),
+        type: objectType.trim() || "unknown",
+        x: clickedX,
+        y: clickedY,
+      });
+
+      setObjectName("");
+      setObjectType("furniture");
+    } catch (error) {
+      console.error("Failed to save semantic object:", error);
+    }
+  };
 
   const processNextCommand = () => {
     if (!context.publish) {
@@ -58,12 +92,30 @@ function ExamplePanel({ context }: Props): ReactElement {
       { topic: "/robot_status" },
       { topic: "/parsed_command" },
       { topic: "/robot_response" },
+      { topic: "/clicked_point" },
     ]);
 
     context.watch("currentFrame");
 
     context.onRender = (renderState, done) => {
       for (const message of renderState.currentFrame ?? []) {
+        if (message.topic === "/clicked_point") {
+          const data = message.message as {
+            point?: {
+              x?: number;
+              y?: number;
+            };
+          };
+
+          if (
+            typeof data.point?.x === "number" &&
+            typeof data.point?.y === "number"
+          ) {
+            setClickedX(data.point.x);
+            setClickedY(data.point.y);
+          }
+        }
+
         if (message.topic === "/robot_status") {
           const data = message.message as { data?: string };
 
@@ -501,6 +553,154 @@ function ExamplePanel({ context }: Props): ReactElement {
                 Queue is empty
               </div>
             )}
+          </div>
+
+          {/* Semantic Object */}
+          <div
+            style={{
+              marginTop: "14px",
+              marginBottom: "14px",
+              padding: "12px",
+              borderRadius: "9px",
+              border: "1px solid rgba(128,128,128,0.25)",
+              background: "rgba(128,128,128,0.05)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "15px",
+                fontWeight: 600,
+                marginBottom: "10px",
+              }}
+            >
+              📍 Semantic Object
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "8px",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: "10px",
+                    opacity: 0.5,
+                    marginBottom: "3px",
+                  }}
+                >
+                  X
+                </div>
+                <div style={{ fontSize: "13px" }}>
+                  {clickedX !== null ? clickedX.toFixed(3) : "—"}
+                </div>
+              </div>
+
+              <div>
+                <div
+                  style={{
+                    fontSize: "10px",
+                    opacity: 0.5,
+                    marginBottom: "3px",
+                  }}
+                >
+                  Y
+                </div>
+                <div style={{ fontSize: "13px" }}>
+                  {clickedY !== null ? clickedY.toFixed(3) : "—"}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: "12px" }}>
+              <div
+                style={{
+                  fontSize: "10px",
+                  opacity: 0.5,
+                  marginBottom: "4px",
+                }}
+              >
+                NAME
+              </div>
+
+              <input
+                type="text"
+                value={objectName}
+                onChange={(event) =>
+                  setObjectName(event.target.value)
+                }
+                placeholder="e.g. dolap"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "8px",
+                  borderRadius: "7px",
+                  border: "1px solid rgba(128,128,128,0.35)",
+                  background: "transparent",
+                  fontSize: "13px",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+
+            <div style={{ marginTop: "10px" }}>
+              <div
+                style={{
+                  fontSize: "10px",
+                  opacity: 0.5,
+                  marginBottom: "4px",
+                }}
+              >
+                TYPE
+              </div>
+
+              <input
+                type="text"
+                value={objectType}
+                onChange={(event) =>
+                  setObjectType(event.target.value)
+                }
+                placeholder="e.g. furniture"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "8px",
+                  borderRadius: "7px",
+                  border: "1px solid rgba(128,128,128,0.35)",
+                  background: "transparent",
+                  fontSize: "13px",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+
+            <button
+              onClick={saveSemanticObject}
+              disabled={
+                clickedX === null ||
+                clickedY === null ||
+                !objectName.trim()
+              }
+              style={{
+                width: "100%",
+                marginTop: "12px",
+                padding: "9px",
+                border: "none",
+                borderRadius: "7px",
+                cursor:
+                  clickedX !== null &&
+                  clickedY !== null &&
+                  objectName.trim()
+                    ? "pointer"
+                    : "not-allowed",
+                fontSize: "13px",
+                fontWeight: 600,
+              }}
+            >
+              💾 Save Object
+            </button>
           </div>
 
           {/* Error / Battery */}

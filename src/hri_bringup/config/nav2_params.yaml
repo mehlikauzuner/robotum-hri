@@ -51,7 +51,7 @@ bt_navigator:
     default_cancel_timeout: 50
     wait_for_service_timeout: 30000
     introspection_mode: "disabled"
-    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigators: ["navigate_to_pose"]
     navigate_to_pose:
       plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
       enable_groot_monitoring: false
