@@ -68,3 +68,4 @@ __pycache__/
 
 # Local development backups
 *.backup*
+/src/navigation2/
