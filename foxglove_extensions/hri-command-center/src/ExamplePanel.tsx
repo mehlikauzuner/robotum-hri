@@ -25,7 +25,7 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [clickedX, setClickedX] = useState<number | null>(null);
   const [clickedY, setClickedY] = useState<number | null>(null);
   const [objectName, setObjectName] = useState("");
-  const [objectType, setObjectType] = useState("furniture");
+  const [objectType, setObjectType] = useState("");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -42,7 +42,7 @@ function ExamplePanel({ context }: Props): ReactElement {
     if (
       clickedX === null ||
       clickedY === null ||
-      !objectName.trim()
+      !objectName.trim() || !objectType.trim()
     ) {
       return;
     }
@@ -681,7 +681,7 @@ function ExamplePanel({ context }: Props): ReactElement {
               disabled={
                 clickedX === null ||
                 clickedY === null ||
-                !objectName.trim()
+                !objectName.trim() || !objectType.trim()
               }
               style={{
                 width: "100%",

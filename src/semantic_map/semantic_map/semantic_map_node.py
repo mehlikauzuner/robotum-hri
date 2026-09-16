@@ -42,6 +42,7 @@ class SemanticMapNode(Node):
             10
         )
 
+        self.last_clicked_point_map = None
         self.clicked_point_map_publisher = self.create_publisher(
             PointStamped,
             "/semantic_clicked_point",
@@ -103,6 +104,7 @@ class SemanticMapNode(Node):
                 timeout=Duration(seconds=1.0)
             )
 
+            self.last_clicked_point_map = point_in_map
             point_in_map.header.frame_id = "map"
             self.clicked_point_map_publisher.publish(point_in_map)
 
@@ -136,22 +138,22 @@ class SemanticMapNode(Node):
             if existing:
                 existing["name"] = request.name
                 existing["type"] = request.type
-                existing["x"] = request.x
-                existing["y"] = request.y
+                existing["x"] = self.last_clicked_point_map.point.x
+                existing["y"] = self.last_clicked_point_map.point.y
             else:
                 objects.append({
                     "name": request.name,
                     "type": request.type,
-                    "x": request.x,
-                    "y": request.y
+                    "x": self.last_clicked_point_map.point.x,
+                    "y": self.last_clicked_point_map.point.y
                 })
 
             with open(self.semantic_map_path, "w") as f:
                 json.dump(data, f, indent=2)
 
             self.objects[request.name] = {
-                "x": request.x,
-                "y": request.y
+                "x": self.last_clicked_point_map.point.x,
+                "y": self.last_clicked_point_map.point.y
             }
 
             response.success = True
@@ -159,7 +161,7 @@ class SemanticMapNode(Node):
 
             self.get_logger().info(
                 f'Object saved: {request.name} '
-                f'({request.x}, {request.y})'
+                f'({self.last_clicked_point_map.point.x}, {self.last_clicked_point_map.point.y})'
             )
 
         except (OSError, json.JSONDecodeError) as e:
