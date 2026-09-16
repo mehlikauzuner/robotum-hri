@@ -6,8 +6,9 @@ import re
 import rclpy
 from rclpy.node import Node
 from slam_toolbox.srv import SaveMap
-from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment
+from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments
 from nav2_msgs.srv import LoadMap
+from std_msgs.msg import String
 
 
 class EnvironmentManager(Node):
@@ -20,6 +21,7 @@ class EnvironmentManager(Node):
         )
 
         self.environments_dir.mkdir(parents=True, exist_ok=True)
+        self.current_environment_pub = self.create_publisher(String, '/current_environment', 10)
 
         self.current_environment_file = (
             self.environments_dir / 'current_environment'
@@ -60,6 +62,12 @@ class EnvironmentManager(Node):
             SelectEnvironment,
             '/select_environment',
             self.handle_select_environment
+        )
+
+        self.list_environments_service = self.create_service(
+            ListEnvironments,
+            '/list_environments',
+            self.handle_list_environments
         )
 
         self.save_environment_service = self.create_service(
@@ -117,6 +125,25 @@ class EnvironmentManager(Node):
                     )
         else:
             self.get_logger().info('No environments found.')
+
+        self.current_environment_timer = self.create_timer(1.0, self.publish_current_environment)
+
+
+    def publish_current_environment(self):
+        if self.current_environment:
+            msg = String()
+            msg.data = self.current_environment
+            self.current_environment_pub.publish(msg)
+
+
+    def handle_list_environments(self, request, response):
+        response.environments = [
+            path.name
+            for path in self.environments_dir.iterdir()
+            if path.is_dir()
+        ]
+        response.environments.sort()
+        return response
 
 
     def handle_save_environment(self, request, response):
@@ -201,18 +228,26 @@ class EnvironmentManager(Node):
         )
 
         future = self.load_map_client.call_async(request)
-        future.add_done_callback(self.handle_map_load_result)
+        future.add_done_callback(partial(self.handle_map_load_result, environment_name))
 
         return future
 
 
-    def handle_map_load_result(self, future):
+    def handle_map_load_result(self, environment_name, future):
         try:
             result = future.result()
 
             if result.result == 0:
+                self.current_environment = environment_name
+
+                self.current_environment_file.write_text(
+                    environment_name + '\n',
+                    encoding='utf-8'
+                )
+
                 self.get_logger().info(
-                    'Map loaded successfully.'
+                    f'Map loaded successfully. '
+                    f'Environment activated: {environment_name}'
                 )
             else:
                 self.get_logger().error(
@@ -314,12 +349,6 @@ class EnvironmentManager(Node):
             )
             return False
 
-        self.current_environment = environment_name
-
-        self.current_environment_file.write_text(
-            environment_name + '\n',
-            encoding='utf-8'
-        )
 
         self.get_logger().info(
             f'Environment selected: {environment_name}'

@@ -8,6 +8,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SelectEnvironment.srv"
   "srv/SaveEnvironment.srv"
   "srv/AddSemanticObject.srv"
+  "srv/ListEnvironments.srv"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

@@ -26,6 +26,13 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [clickedY, setClickedY] = useState<number | null>(null);
   const [objectName, setObjectName] = useState("");
   const [objectType, setObjectType] = useState("");
+  const [currentEnvironment, setCurrentEnvironment] = useState("Unknown");
+  const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
+  const [newEnvironmentName, setNewEnvironmentName] = useState("");
+  const [environmentMessage, setEnvironmentMessage] = useState("");
+  const [showChangeEnvironmentModal, setShowChangeEnvironmentModal] = useState(false);
+  const [availableEnvironments, setAvailableEnvironments] = useState<string[]>([]);
+  const [selectedEnvironment, setSelectedEnvironment] = useState("");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -62,6 +69,133 @@ function ExamplePanel({ context }: Props): ReactElement {
     }
   };
 
+  const listEnvironments = async () => {
+    if (!context.callService) {
+      setEnvironmentMessage("Foxglove service calls are not available.");
+      return;
+    }
+
+    setEnvironmentMessage("Loading environments...");
+
+    try {
+      const result = await context.callService(
+        "/list_environments",
+        {},
+      ) as { environments?: string[] };
+
+      console.log("List environments response:", result);
+
+      const environments = Array.isArray(result.environments)
+        ? result.environments
+        : [];
+
+      setEnvironmentMessage(
+        `DEBUG RESPONSE: ${JSON.stringify(result)}`
+      );
+
+      setAvailableEnvironments(environments);
+
+      if (environments.length > 0) {
+        setSelectedEnvironment((current) =>
+          current && environments.includes(current)
+            ? current
+            : environments[0] ?? ""
+        );
+        setEnvironmentMessage(
+          `${environments.length} saved environment(s) found.`,
+        );
+      } else {
+        setEnvironmentMessage(
+          `No environments returned. Response: ${JSON.stringify(result)}`
+        );
+      }
+    } catch (error) {
+      console.error("Failed to list environments:", error);
+      setEnvironmentMessage(
+        error instanceof Error
+          ? `Failed to list environments: ${error.message}`
+          : `Failed to list environments: ${String(error)}`,
+      );
+    }
+  };
+
+
+  const selectEnvironment = async () => {
+    const name = selectedEnvironment.trim();
+
+    if (!name || !context.callService) {
+      return;
+    }
+
+    setEnvironmentMessage(`Loading environment "${name}"...`);
+
+    try {
+      const result = await context.callService(
+        "/select_environment",
+        {
+          environment_name: name,
+        },
+      ) as { success?: boolean; message?: string };
+
+      if (result.success) {
+        setEnvironmentMessage(
+          result.message || `Environment "${name}" selected successfully.`,
+        );
+        setShowChangeEnvironmentModal(false);
+      } else {
+        setEnvironmentMessage(
+          result.message || "Failed to select environment.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to select environment:", error);
+      setEnvironmentMessage(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
+
+
+  const saveEnvironment = async () => {
+    const name = newEnvironmentName.trim();
+
+    if (!name || !context.callService) {
+      return;
+    }
+
+    setEnvironmentMessage("Saving environment...");
+
+    try {
+      const result = await context.callService(
+        "/save_environment",
+        {
+          environment_name: name,
+        },
+      ) as { success?: boolean; message?: string };
+
+      if (result.success) {
+        setEnvironmentMessage(
+          result.message || "Environment saved successfully.",
+        );
+        setNewEnvironmentName("");
+        setShowEnvironmentModal(false);
+      } else {
+        setEnvironmentMessage(
+          result.message || "Failed to save environment.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to save environment:", error);
+      setEnvironmentMessage(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
+
   const processNextCommand = () => {
     if (!context.publish) {
       return;
@@ -93,12 +227,21 @@ function ExamplePanel({ context }: Props): ReactElement {
       { topic: "/parsed_command" },
       { topic: "/robot_response" },
       { topic: "/clicked_point" },
+      { topic: "/current_environment" },
     ]);
 
     context.watch("currentFrame");
 
     context.onRender = (renderState, done) => {
       for (const message of renderState.currentFrame ?? []) {
+        if (message.topic === "/current_environment") {
+          const data = message.message as { data?: string };
+
+          if (typeof data.data === "string" && data.data.trim()) {
+            setCurrentEnvironment(data.data.trim());
+          }
+        }
+
         if (message.topic === "/clicked_point") {
           const data = message.message as {
             point?: {
@@ -366,6 +509,86 @@ function ExamplePanel({ context }: Props): ReactElement {
         >
           Give your robot a command using natural language.
         </div>
+      </div>
+
+      {/* Current Environment */}
+      <div style={{ marginBottom: "18px" }}>
+        <div
+          style={{
+            fontSize: "15px",
+            fontWeight: 600,
+            marginBottom: "8px",
+          }}
+        >
+          🌍 Current Environment
+        </div>
+
+        <div
+          style={{
+            padding: "12px",
+            borderRadius: "9px",
+            border: "1px solid rgba(128,128,128,0.25)",
+            background: "rgba(128,128,128,0.05)",
+            fontSize: "14px",
+            fontWeight: 600,
+          }}
+        >
+          {currentEnvironment}
+        </div>
+
+        <button
+          onClick={() => {
+            setEnvironmentMessage("");
+            setNewEnvironmentName("");
+            setShowEnvironmentModal(true);
+          }}
+          style={{
+            width: "100%",
+            marginTop: "8px",
+            padding: "10px",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+          }}
+        >
+          ➕ ADD ENVIRONMENT
+        </button>
+        <button
+          onClick={() => {
+            setEnvironmentMessage("");
+            setSelectedEnvironment(currentEnvironment);
+            listEnvironments();
+            setShowChangeEnvironmentModal(true);
+          }}
+          style={{
+            width: "100%",
+            marginTop: "8px",
+            padding: "10px",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer",
+            fontSize: "13px",
+            fontWeight: 600,
+          }}
+        >
+          🔄 CHANGE ENVIRONMENT
+
+        </button>
+
+        {environmentMessage && (
+          <div
+            style={{
+              marginTop: "8px",
+              fontSize: "12px",
+              opacity: 0.75,
+              wordBreak: "break-word",
+            }}
+          >
+            {environmentMessage}
+          </div>
+        )}
       </div>
 
       {/* Live Status */}
@@ -992,6 +1215,258 @@ function ExamplePanel({ context }: Props): ReactElement {
           {parsedAction}
         </div>
       </div>
+
+      {/* Add Environment Modal */}
+      {showChangeEnvironmentModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "430px",
+              background: "var(--panel-background, white)",
+              borderRadius: "12px",
+              padding: "20px",
+              boxSizing: "border-box",
+              boxShadow: "0 8px 30px rgba(0, 0, 0, 0.25)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "16px",
+                fontWeight: 600,
+                marginBottom: "14px",
+              }}
+            >
+              🔄 Change Environment
+            </div>
+
+            <div
+              style={{
+                fontSize: "13px",
+                marginBottom: "10px",
+                opacity: 0.75,
+              }}
+            >
+              Select a saved environment.
+            </div>
+
+            {availableEnvironments.length === 0 ? (
+              <div
+                style={{
+                  padding: "12px",
+                  borderRadius: "8px",
+                  background: "rgba(128,128,128,0.08)",
+                  fontSize: "13px",
+                  opacity: 0.75,
+                  marginBottom: "14px",
+                }}
+              >
+                {environmentMessage || "No saved environments found."}
+              </div>
+            ) : (
+              <select
+                value={selectedEnvironment}
+                onChange={(event) =>
+                  setSelectedEnvironment(event.target.value)
+                }
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "10px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(128,128,128,0.4)",
+                  background: "transparent",
+                  fontSize: "13px",
+                  fontFamily: "inherit",
+                  outline: "none",
+                  marginBottom: "14px",
+                }}
+              >
+                {availableEnvironments.map((environment) => (
+                  <option key={environment} value={environment}>
+                    {environment}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "8px",
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowChangeEnvironmentModal(false);
+                  setEnvironmentMessage("");
+                }}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "7px",
+                  border: "1px solid rgba(128,128,128,0.35)",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={selectEnvironment}
+                disabled={!selectedEnvironment.trim()}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "7px",
+                  border: "none",
+                  cursor: selectedEnvironment.trim()
+                    ? "pointer"
+                    : "default",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  opacity: selectedEnvironment.trim() ? 1 : 0.5,
+                }}
+              >
+                🔄 Change Environment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {showEnvironmentModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "430px",
+              background: "var(--panel-background, white)",
+              borderRadius: "12px",
+              padding: "20px",
+              boxSizing: "border-box",
+              boxShadow: "0 8px 30px rgba(0, 0, 0, 0.25)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "16px",
+                fontWeight: 600,
+                marginBottom: "14px",
+              }}
+            >
+              ➕ Add Environment
+            </div>
+
+            <div
+              style={{
+                fontSize: "13px",
+                marginBottom: "8px",
+                opacity: 0.75,
+              }}
+            >
+              Enter a name for the new environment.
+            </div>
+
+            <input
+              type="text"
+              value={newEnvironmentName}
+              onChange={(event) =>
+                setNewEnvironmentName(event.target.value)
+              }
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  newEnvironmentName.trim()
+                ) {
+                  event.preventDefault();
+                  saveEnvironment();
+                }
+              }}
+              placeholder="e.g. living_room"
+              autoFocus
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "10px",
+                borderRadius: "8px",
+                border: "1px solid rgba(128,128,128,0.4)",
+                background: "transparent",
+                fontSize: "13px",
+                fontFamily: "inherit",
+                outline: "none",
+                marginBottom: "14px",
+              }}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "8px",
+              }}
+            >
+              <button
+                onClick={() => {
+                  setShowEnvironmentModal(false);
+                  setNewEnvironmentName("");
+                  setEnvironmentMessage("");
+                }}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "7px",
+                  border: "1px solid rgba(128,128,128,0.35)",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={saveEnvironment}
+                disabled={!newEnvironmentName.trim()}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "7px",
+                  border: "none",
+                  cursor: newEnvironmentName.trim()
+                    ? "pointer"
+                    : "default",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  opacity: newEnvironmentName.trim() ? 1 : 0.5,
+                }}
+              >
+                💾 Save Environment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reply Modal */}
       {showReplyModal && (
