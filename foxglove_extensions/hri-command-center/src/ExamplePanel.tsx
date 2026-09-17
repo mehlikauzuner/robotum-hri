@@ -33,6 +33,7 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [showChangeEnvironmentModal, setShowChangeEnvironmentModal] = useState(false);
   const [availableEnvironments, setAvailableEnvironments] = useState<string[]>([]);
   const [selectedEnvironment, setSelectedEnvironment] = useState("");
+  const [isMapping, setIsMapping] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -158,6 +159,85 @@ function ExamplePanel({ context }: Props): ReactElement {
   };
 
 
+  const deleteEnvironment = async (name: string) => {
+    if (!context.callService) {
+      setEnvironmentMessage("Foxglove service calls are not available.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete environment "${name}"?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const result = await context.callService(
+        "/delete_environment",
+        {
+          environment_name: name,
+        },
+      ) as { success?: boolean; message?: string };
+
+      if (result.success) {
+        setEnvironmentMessage(
+          result.message || `Environment "${name}" deleted successfully.`,
+        );
+
+        await listEnvironments();
+      } else {
+        setEnvironmentMessage(
+          result.message || `Failed to delete environment "${name}".`,
+        );
+      }
+    } catch (error) {
+      console.error("Failed to delete environment:", error);
+      setEnvironmentMessage(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
+
+  const finishMapping = async () => {
+    if (!context.callService) {
+      setEnvironmentMessage("Foxglove service calls are not available.");
+      return;
+    }
+
+    setEnvironmentMessage("Finishing mapping...");
+
+    try {
+      const result = await context.callService(
+        "/finish_mapping",
+        {},
+      ) as { success?: boolean; message?: string };
+
+      if (result.success) {
+        setIsMapping(false);
+        setNewEnvironmentName("");
+        setEnvironmentMessage(
+          result.message || "Mapping finished. Enter a name to save the environment.",
+        );
+        setShowEnvironmentModal(true);
+      } else {
+        setEnvironmentMessage(
+          result.message || "Failed to finish mapping.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to finish mapping:", error);
+      setEnvironmentMessage(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
+
   const saveEnvironment = async () => {
     const name = newEnvironmentName.trim();
 
@@ -176,6 +256,7 @@ function ExamplePanel({ context }: Props): ReactElement {
       ) as { success?: boolean; message?: string };
 
       if (result.success) {
+        setIsMapping(false);
         setEnvironmentMessage(
           result.message || "Environment saved successfully.",
         );
@@ -478,6 +559,42 @@ function ExamplePanel({ context }: Props): ReactElement {
     setQueue([...commandQueueRef.current]);
   };
 
+  const startMapping = async () => {
+    if (!context.callService) {
+      setEnvironmentMessage("Foxglove service calls are not available.");
+      return;
+    }
+
+    setEnvironmentMessage("Starting new mapping session...");
+
+    try {
+      const result = await context.callService(
+        "/start_mapping",
+        {},
+      ) as { success?: boolean; message?: string };
+
+      if (result.success) {
+        setIsMapping(true);
+        setEnvironmentMessage(
+          result.message || "New mapping session started.",
+        );
+        setShowEnvironmentModal(false);
+      } else {
+        setEnvironmentMessage(
+          result.message || "Failed to start mapping.",
+        );
+      }
+    } catch (error) {
+      console.error("Failed to start mapping:", error);
+      setEnvironmentMessage(
+        error instanceof Error
+          ? error.message
+          : String(error),
+      );
+    }
+  };
+
+
   return (
     <div
       style={{
@@ -536,25 +653,39 @@ function ExamplePanel({ context }: Props): ReactElement {
           {currentEnvironment}
         </div>
 
-        <button
-          onClick={() => {
-            setEnvironmentMessage("");
-            setNewEnvironmentName("");
-            setShowEnvironmentModal(true);
-          }}
-          style={{
-            width: "100%",
-            marginTop: "8px",
-            padding: "10px",
-            borderRadius: "8px",
-            border: "none",
-            cursor: "pointer",
-            fontSize: "13px",
-            fontWeight: 600,
-          }}
-        >
-          ➕ ADD ENVIRONMENT
-        </button>
+        {!isMapping ? (
+          <button
+            onClick={startMapping}
+            style={{
+              width: "100%",
+              marginTop: "8px",
+              padding: "10px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              fontSize: "13px",
+              fontWeight: 600,
+            }}
+          >
+            ➕ CREATE NEW ENVIRONMENT
+          </button>
+        ) : (
+          <button
+            onClick={finishMapping}
+            style={{
+              width: "100%",
+              marginTop: "8px",
+              padding: "10px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              fontSize: "13px",
+              fontWeight: 600,
+            }}
+          >
+            🛑 FINISH MAPPING
+          </button>
+        )}
         <button
           onClick={() => {
             setEnvironmentMessage("");
@@ -1216,7 +1347,7 @@ function ExamplePanel({ context }: Props): ReactElement {
         </div>
       </div>
 
-      {/* Add Environment Modal */}
+      {/* Save Environment Modal */}
       {showChangeEnvironmentModal && (
         <div
           style={{
@@ -1275,30 +1406,65 @@ function ExamplePanel({ context }: Props): ReactElement {
                 {environmentMessage || "No saved environments found."}
               </div>
             ) : (
-              <select
-                value={selectedEnvironment}
-                onChange={(event) =>
-                  setSelectedEnvironment(event.target.value)
-                }
+              <div
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
-                  padding: "10px",
-                  borderRadius: "8px",
                   border: "1px solid rgba(128,128,128,0.4)",
-                  background: "transparent",
-                  fontSize: "13px",
-                  fontFamily: "inherit",
-                  outline: "none",
+                  borderRadius: "8px",
+                  overflow: "hidden",
                   marginBottom: "14px",
                 }}
               >
                 {availableEnvironments.map((environment) => (
-                  <option key={environment} value={environment}>
-                    {environment}
-                  </option>
+                  <div
+                    key={environment}
+                    onClick={() => setSelectedEnvironment(environment)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "10px 12px",
+                      cursor: "pointer",
+                      background:
+                        selectedEnvironment === environment
+                          ? "rgba(128,128,128,0.15)"
+                          : "transparent",
+                      borderBottom:
+                        environment === availableEnvironments[availableEnvironments.length - 1]
+                          ? "none"
+                          : "1px solid rgba(128,128,128,0.2)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "13px",
+                        fontWeight:
+                          selectedEnvironment === environment ? 600 : 400,
+                      }}
+                    >
+                      {environment}
+                    </span>
+
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        deleteEnvironment(environment);
+                      }}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        fontSize: "15px",
+                        padding: "2px 4px",
+                      }}
+                      title={`Delete ${environment}`}
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 ))}
-              </select>
+              </div>
             )}
 
             <div
@@ -1378,7 +1544,7 @@ function ExamplePanel({ context }: Props): ReactElement {
                 marginBottom: "14px",
               }}
             >
-              ➕ Add Environment
+              💾 Save Environment
             </div>
 
             <div
@@ -1388,7 +1554,7 @@ function ExamplePanel({ context }: Props): ReactElement {
                 opacity: 0.75,
               }}
             >
-              Enter a name for the new environment.
+              Enter a name to save the mapped environment.
             </div>
 
             <input

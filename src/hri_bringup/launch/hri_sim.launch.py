@@ -209,5 +209,6 @@ def generate_launch_description():
         robot_status_node,
         whisper_server,
         tts_node,
+        environment_manager_node,
         tts_server,
     ])

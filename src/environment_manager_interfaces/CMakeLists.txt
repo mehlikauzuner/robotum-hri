@@ -9,6 +9,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SaveEnvironment.srv"
   "srv/AddSemanticObject.srv"
   "srv/ListEnvironments.srv"
+  "srv/StartMapping.srv"
+        "srv/FinishMapping.srv"
+        "srv/DeleteEnvironment.srv"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

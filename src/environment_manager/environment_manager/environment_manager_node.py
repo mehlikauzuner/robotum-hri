@@ -2,11 +2,12 @@ from pathlib import Path
 from functools import partial
 import json
 import re
+import subprocess
 
 import rclpy
 from rclpy.node import Node
 from slam_toolbox.srv import SaveMap
-from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments
+from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments, StartMapping, FinishMapping, DeleteEnvironment
 from nav2_msgs.srv import LoadMap
 from std_msgs.msg import String
 
@@ -74,6 +75,24 @@ class EnvironmentManager(Node):
             SaveEnvironment,
             '/save_environment',
             self.handle_save_environment
+        )
+
+        self.start_mapping_service = self.create_service(
+            StartMapping,
+            '/start_mapping',
+            self.handle_start_mapping
+        )
+
+        self.finish_mapping_service = self.create_service(
+            FinishMapping,
+            '/finish_mapping',
+            self.handle_finish_mapping
+        )
+
+        self.delete_environment_service = self.create_service(
+            DeleteEnvironment,
+            '/delete_environment',
+            self.handle_delete_environment
         )
 
         self.load_map_client = self.create_client(
@@ -201,64 +220,121 @@ class EnvironmentManager(Node):
         return response
 
 
-    def load_environment_map(self, environment_name):
-        map_path = (
-            self.environments_dir
-            / environment_name
-            / 'map.yaml'
-        )
+    def handle_delete_environment(self, request, response):
+        environment_name = request.environment_name.strip()
 
-        if not map_path.exists():
-            self.get_logger().error(
-                f'Map file not found: {map_path}'
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', environment_name):
+            response.success = False
+            response.message = 'Invalid environment name.'
+            return response
+
+        if environment_name == self.current_environment:
+            response.success = False
+            response.message = 'Cannot delete the current environment.'
+            return response
+
+        environment_dir = self.environments_dir / environment_name
+
+        if not environment_dir.is_dir():
+            response.success = False
+            response.message = (
+                f'Environment "{environment_name}" does not exist.'
             )
-            return False
+            return response
 
-        if not self.load_map_client.wait_for_service(timeout_sec=2.0):
-            self.get_logger().error(
-                '/map_server/load_map service is not available.'
-            )
-            return False
-
-        request = LoadMap.Request()
-        request.map_url = str(map_path)
-
-        self.get_logger().info(
-            f'Loading map: {map_path}'
-        )
-
-        future = self.load_map_client.call_async(request)
-        future.add_done_callback(partial(self.handle_map_load_result, environment_name))
-
-        return future
-
-
-    def handle_map_load_result(self, environment_name, future):
         try:
-            result = future.result()
+            import shutil
+            shutil.rmtree(environment_dir)
 
-            if result.result == 0:
-                self.current_environment = environment_name
+            response.success = True
+            response.message = (
+                f'Environment "{environment_name}" deleted successfully.'
+            )
 
-                self.current_environment_file.write_text(
-                    environment_name + '\n',
-                    encoding='utf-8'
-                )
-
-                self.get_logger().info(
-                    f'Map loaded successfully. '
-                    f'Environment activated: {environment_name}'
-                )
-            else:
-                self.get_logger().error(
-                    f'Map load failed. Result code: {result.result}'
-                )
+            self.get_logger().info(
+                f'Environment deleted: {environment_name}'
+            )
 
         except Exception as error:
+            response.success = False
+            response.message = (
+                f'Failed to delete environment: {error}'
+            )
             self.get_logger().error(
-                f'Map load request failed: {error}'
+                f'Failed to delete environment "{environment_name}": {error}'
             )
 
+        return response
+
+    def handle_start_mapping(self, request, response):
+        self.get_logger().info(
+            'Start mapping request received.'
+        )
+
+        if hasattr(self, 'mapping_process') and self.mapping_process is not None:
+            if self.mapping_process.poll() is None:
+                response.success = False
+                response.message = 'Mapping is already running.'
+                return response
+
+        command = [
+            'python3',
+            '/home/mehlika/robotum-hri-github/src/environment_manager/environment_manager/mapping_supervisor.py',
+        ]
+
+        try:
+            self.mapping_process = subprocess.Popen(
+                command,
+                cwd='/home/mehlika/robotum-hri-github',
+            )
+
+            response.success = True
+            response.message = 'Mapping process started.'
+            self.get_logger().info(
+                f'Mapping process started with PID {self.mapping_process.pid}.'
+            )
+
+        except Exception as error:
+            self.mapping_process = None
+            response.success = False
+            response.message = (
+                f'Failed to start mapping: {error}'
+            )
+            self.get_logger().error(
+                f'Failed to start mapping: {error}'
+            )
+
+        return response
+
+
+    def handle_finish_mapping(self, request, response):
+        self.get_logger().info(
+            'Finish mapping request received.'
+        )
+
+        if not hasattr(self, 'mapping_process') or self.mapping_process is None:
+            response.success = False
+            response.message = 'No mapping process is running.'
+            return response
+
+        if self.mapping_process.poll() is not None:
+            self.mapping_process = None
+            response.success = False
+            response.message = 'Mapping process is not running.'
+            return response
+
+        self.mapping_finished = True
+
+        response.success = True
+        response.message = (
+            'Mapping finished. Enter a name to save the environment.'
+        )
+
+        self.get_logger().info(
+            'Mapping marked as finished. SLAM remains active until save.'
+        )
+
+        return response
 
     def handle_map_save_result(self, environment_name, future):
         try:
@@ -303,6 +379,26 @@ class EnvironmentManager(Node):
                 self.get_logger().info(
                     f'Environment metadata created: {environment_name}'
                 )
+
+                if (
+                    hasattr(self, 'mapping_process')
+                    and self.mapping_process is not None
+                    and self.mapping_process.poll() is None
+                ):
+                    self.get_logger().info(
+                        'Stopping mapping process after successful save.'
+                    )
+
+                    try:
+                        self.mapping_process.terminate()
+                        self.mapping_process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.mapping_process.kill()
+                        self.mapping_process.wait()
+                    finally:
+                        self.mapping_process = None
+
+                self.mapping_finished = False
             else:
                 self.get_logger().error(
                     f'Environment map save failed. '
