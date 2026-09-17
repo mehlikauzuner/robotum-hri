@@ -142,6 +142,12 @@ def generate_launch_description():
         output='screen'
     )
 
+    environment_manager_node = Node(
+        package='environment_manager',
+        executable='environment_manager_node',
+        output='screen'
+    )
+
     whisper_server = ExecuteProcess(
         cmd=[
             '/home/mehlika/whisper-env/bin/python',

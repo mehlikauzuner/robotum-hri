@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 
 import rclpy
@@ -15,9 +16,12 @@ class SemanticMapNode(Node):
     def __init__(self):
         super().__init__("semantic_map")
 
+        self.environments_dir = Path.home() / "robotum-hri-github" / "environments"
+        self.current_environment = "test_environment"
         self.semantic_map_path = (
-            "/home/mehlika/robotum-hri-github/"
-            "environments/test_environment/semantic_map.json"
+            self.environments_dir
+            / self.current_environment
+            / "semantic_map.json"
         )
 
         self.objects = self.load_semantic_map()
@@ -26,6 +30,13 @@ class SemanticMapNode(Node):
             String,
             "/parsed_command",
             self.command_callback,
+            10
+        )
+
+        self.environment_subscription = self.create_subscription(
+            String,
+            "/current_environment",
+            self.environment_callback,
             10
         )
 
@@ -62,6 +73,35 @@ class SemanticMapNode(Node):
         )
 
         self.get_logger().info("Semantic Map Node Started.")
+
+    def environment_callback(self, msg):
+        environment_name = msg.data.strip()
+
+        if not environment_name or environment_name == self.current_environment:
+            return
+
+        environment_dir = self.environments_dir / environment_name
+        semantic_map_path = environment_dir / "semantic_map.json"
+
+        if not environment_dir.is_dir():
+            self.get_logger().warning(
+                f"Environment directory not found: {environment_name}"
+            )
+            return
+
+        if not semantic_map_path.exists():
+            self.get_logger().warning(
+                f"Semantic map not found for environment: {environment_name}"
+            )
+            return
+
+        self.current_environment = environment_name
+        self.semantic_map_path = semantic_map_path
+        self.objects = self.load_semantic_map()
+
+        self.get_logger().info(
+            f"Semantic map switched to environment: {environment_name}"
+        )
 
     def load_semantic_map(self):
         try:
