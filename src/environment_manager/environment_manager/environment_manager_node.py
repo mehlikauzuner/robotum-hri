@@ -3,6 +3,8 @@ from functools import partial
 import json
 import re
 import subprocess
+import os
+import signal
 
 import rclpy
 from rclpy.node import Node
@@ -10,6 +12,8 @@ from slam_toolbox.srv import SaveMap
 from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments, StartMapping, FinishMapping, DeleteEnvironment
 from nav2_msgs.srv import LoadMap
 from std_msgs.msg import String
+from geometry_msgs.msg import PoseWithCovarianceStamped
+from lifecycle_msgs.srv import ChangeState, GetState
 
 
 class EnvironmentManager(Node):
@@ -23,6 +27,17 @@ class EnvironmentManager(Node):
 
         self.environments_dir.mkdir(parents=True, exist_ok=True)
         self.current_environment_pub = self.create_publisher(String, '/current_environment', 10)
+
+        self.initial_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped,
+            '/initialpose',
+            10
+        )
+
+        self.amcl_get_state_client = self.create_client(
+            GetState,
+            '/amcl/get_state'
+        )
 
         self.current_environment_file = (
             self.environments_dir / 'current_environment'
@@ -411,6 +426,270 @@ class EnvironmentManager(Node):
             )
 
 
+    def load_environment_map(self, environment_name):
+        environment_dir = self.environments_dir / environment_name
+        map_path = environment_dir / 'map.yaml'
+
+        if not map_path.exists():
+            self.get_logger().error(
+                f'Map file not found: {map_path}'
+            )
+            return False
+
+        self.get_logger().info(
+            f'Starting localization for environment: {environment_name}'
+        )
+        self.get_logger().info(
+            f'Using map: {map_path}'
+        )
+
+        if (
+            hasattr(self, 'localization_process')
+            and self.localization_process is not None
+            and self.localization_process.poll() is None
+        ):
+            self.get_logger().info(
+                'Stopping previous localization process group.'
+            )
+
+            try:
+                os.killpg(
+                    os.getpgid(self.localization_process.pid),
+                    signal.SIGTERM
+                )
+
+                self.localization_process.wait(timeout=10)
+
+            except subprocess.TimeoutExpired:
+                self.get_logger().warning(
+                    'Localization process group did not stop in time. '
+                    'Sending SIGKILL.'
+                )
+
+                try:
+                    os.killpg(
+                        os.getpgid(self.localization_process.pid),
+                        signal.SIGKILL
+                    )
+                except ProcessLookupError:
+                    pass
+
+                self.localization_process.wait()
+
+            except ProcessLookupError:
+                pass
+
+            finally:
+                self.localization_process = None
+
+        self.slam_change_state_client = self.create_client(
+            ChangeState,
+            '/slam_toolbox/change_state'
+        )
+
+        self.slam_get_state_client = self.create_client(
+            GetState,
+            '/slam_toolbox/get_state'
+        )
+
+        if not self.slam_change_state_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warning(
+                'SLAM lifecycle service not available. '
+                'Starting localization without deactivating SLAM.'
+            )
+            return self._start_localization_process(map_path)
+
+        if not self.slam_get_state_client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warning(
+                'SLAM get_state service not available. '
+                'Starting localization without deactivating SLAM.'
+            )
+            return self._start_localization_process(map_path)
+
+        state_future = self.slam_get_state_client.call_async(
+            GetState.Request()
+        )
+
+        def after_slam_state(state_future):
+            try:
+                state_result = state_future.result()
+                current_state = state_result.current_state
+
+                self.get_logger().info(
+                    f'SLAM current lifecycle state: '
+                    f'{current_state.id} ({current_state.label})'
+                )
+
+                # SLAM zaten inactive ise tekrar deactivate etme.
+                if current_state.id == 2:
+                    self.get_logger().info(
+                        'SLAM is already inactive. '
+                        'Starting localization directly.'
+                    )
+                    self._start_localization_process(map_path)
+                    return
+
+                # Sadece active durumundayken deactivate et.
+                if current_state.id != 3:
+                    self.get_logger().warning(
+                        f'SLAM is not active or inactive '
+                        f'(state={current_state.id}, '
+                        f'label={current_state.label}). '
+                        'Starting localization directly.'
+                    )
+                    self._start_localization_process(map_path)
+                    return
+
+                request = ChangeState.Request()
+                request.transition.id = 4
+
+                deactivate_future = self.slam_change_state_client.call_async(
+                    request
+                )
+
+                def after_slam_deactivate(deactivate_future):
+                    try:
+                        result = deactivate_future.result()
+
+                        if result.success:
+                            self.get_logger().info(
+                                'SLAM successfully deactivated.'
+                            )
+                        else:
+                            self.get_logger().warning(
+                                'SLAM deactivate transition returned failure.'
+                            )
+
+                        self._start_localization_process(map_path)
+
+                    except Exception as error:
+                        self.get_logger().error(
+                            f'Failed to deactivate SLAM: {error}'
+                        )
+
+                deactivate_future.add_done_callback(
+                    after_slam_deactivate
+                )
+
+                self.get_logger().info(
+                    'Requested SLAM deactivation before localization.'
+                )
+
+            except Exception as error:
+                self.get_logger().error(
+                    f'Failed to get SLAM lifecycle state: {error}'
+                )
+                self._start_localization_process(map_path)
+
+        state_future.add_done_callback(after_slam_state)
+
+        return True
+
+
+    def _start_localization_process(self, map_path):
+        command = [
+            'ros2',
+            'launch',
+            'hri_bringup',
+            'hri_localization.launch.py',
+            f'map:={map_path}',
+        ]
+
+        try:
+            localization_env = os.environ.copy()
+            localization_env['FASTDDS_BUILTIN_TRANSPORTS'] = 'UDPv4'
+
+            self.localization_process = subprocess.Popen(
+                command,
+                cwd='/home/mehlika/robotum-hri-github',
+                env=localization_env,
+                start_new_session=True,
+            )
+
+            self.get_logger().info(
+                f'Localization process started with PID '
+                f'{self.localization_process.pid}.'
+            )
+
+            # Give AMCL the robot's known starting pose.
+            if hasattr(self, 'initial_pose_timer') and self.initial_pose_timer is not None:
+                self.initial_pose_timer.cancel()
+
+            self.initial_pose_timer = self.create_timer(
+                1.0,
+                self.check_amcl_and_publish_initial_pose,
+            )
+
+            return self.localization_process
+
+        except Exception as error:
+            self.localization_process = None
+            self.get_logger().error(
+                f'Failed to start localization: {error}'
+            )
+            return False
+
+
+    def check_amcl_and_publish_initial_pose(self):
+        if not self.amcl_get_state_client.service_is_ready():
+            return
+
+        future = self.amcl_get_state_client.call_async(
+            GetState.Request()
+        )
+
+        def state_callback(future):
+            try:
+                result = future.result()
+                state = result.current_state
+
+                if state.id == 3:
+                    self.get_logger().info(
+                        'AMCL is active. Publishing initial pose.'
+                    )
+
+                    self.publish_initial_pose()
+
+                    if hasattr(self, 'initial_pose_timer'):
+                        self.initial_pose_timer.cancel()
+                        self.initial_pose_timer = None
+
+            except Exception as error:
+                self.get_logger().warning(
+                    f'Could not get AMCL lifecycle state: {error}'
+                )
+
+        future.add_done_callback(state_callback)
+
+
+    def publish_initial_pose(self):
+        msg = PoseWithCovarianceStamped()
+
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+
+        msg.pose.pose.position.x = 0.0
+        msg.pose.pose.position.y = 0.0
+        msg.pose.pose.position.z = 0.0
+
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = 0.0
+        msg.pose.pose.orientation.w = 1.0
+
+        # Reasonable covariance for a known simulated starting pose.
+        msg.pose.covariance[0] = 0.25
+        msg.pose.covariance[7] = 0.25
+        msg.pose.covariance[35] = 0.0685
+
+        self.initial_pose_pub.publish(msg)
+
+        self.get_logger().info(
+            'Initial pose published to AMCL: x=0.0, y=0.0, yaw=0.0'
+        )
+
+
+
     def select_environment(self, environment_name):
         if not re.fullmatch(r'[A-Za-z0-9_-]+', environment_name):
             self.get_logger().error(
@@ -445,7 +724,6 @@ class EnvironmentManager(Node):
             )
             return False
 
-
         self.get_logger().info(
             f'Environment selected: {environment_name}'
         )
@@ -456,44 +734,23 @@ class EnvironmentManager(Node):
             f'Map: {metadata.get("map")}'
         )
 
-        return True
-
-
-    def save_environment(self, environment_name):
-        if not re.fullmatch(r'[A-Za-z0-9_-]+', environment_name):
-            self.get_logger().error(
-                f'Invalid environment name: {environment_name}'
-            )
-            return None
-
-        environment_dir = self.environments_dir / environment_name
-        environment_dir.mkdir(parents=True, exist_ok=True)
-
-        map_path = environment_dir / 'map'
-
-        request = SaveMap.Request()
-        request.name.data = str(map_path)
-
-        self.get_logger().info(
-            f'Saving map for environment: {environment_name}'
+        self.current_environment = environment_name
+        self.current_environment_file.write_text(
+            environment_name,
+            encoding='utf-8'
         )
 
-        if not self.save_map_client.wait_for_service(timeout_sec=2.0):
-            self.get_logger().error(
-                '/slam_toolbox/save_map service is not available.'
-            )
-            return None
+        self.get_logger().info(
+            f'Current environment updated to: {environment_name}'
+        )
 
-        future = self.save_map_client.call_async(request)
-
-        return future
+        return True
 
 
 def main(args=None):
     rclpy.init(args=args)
 
     node = EnvironmentManager()
-
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

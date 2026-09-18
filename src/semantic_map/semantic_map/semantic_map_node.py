@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
 from std_msgs.msg import String
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, PoseWithCovarianceStamped
 import tf2_ros
 import tf2_geometry_msgs
 from environment_manager_interfaces.srv import AddSemanticObject
@@ -57,6 +57,12 @@ class SemanticMapNode(Node):
         self.clicked_point_map_publisher = self.create_publisher(
             PointStamped,
             "/semantic_clicked_point",
+            10
+        )
+
+        self.initial_pose_publisher = self.create_publisher(
+            PoseWithCovarianceStamped,
+            "/initialpose",
             10
         )
 
@@ -147,6 +153,25 @@ class SemanticMapNode(Node):
             self.last_clicked_point_map = point_in_map
             point_in_map.header.frame_id = "map"
             self.clicked_point_map_publisher.publish(point_in_map)
+
+            initial_pose = PoseWithCovarianceStamped()
+            initial_pose.header.frame_id = "map"
+            initial_pose.header.stamp = self.get_clock().now().to_msg()
+
+            initial_pose.pose.pose.position.x = point_in_map.point.x
+            initial_pose.pose.pose.position.y = point_in_map.point.y
+            initial_pose.pose.pose.position.z = 0.0
+
+            initial_pose.pose.pose.orientation.x = 0.0
+            initial_pose.pose.pose.orientation.y = 0.0
+            initial_pose.pose.pose.orientation.z = 0.0
+            initial_pose.pose.pose.orientation.w = 1.0
+
+            initial_pose.pose.covariance[0] = 0.25
+            initial_pose.pose.covariance[7] = 0.25
+            initial_pose.pose.covariance[35] = 0.0685
+
+            self.initial_pose_publisher.publish(initial_pose)
 
             self.get_logger().info(
                 "Clicked point transformed to map: "
