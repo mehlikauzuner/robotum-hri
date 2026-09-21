@@ -180,6 +180,45 @@ class EnvironmentManager(Node):
         return response
 
 
+    def save_environment(self, environment_name):
+        environment_name = environment_name.strip()
+
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', environment_name):
+            self.get_logger().error(
+                f'Invalid environment name: {environment_name}'
+            )
+            return None
+
+        environment_dir = self.environments_dir / environment_name
+
+        try:
+            environment_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            self.get_logger().error(
+                f'Environment already exists: {environment_name}'
+            )
+            return None
+        except OSError as error:
+            self.get_logger().error(
+                f'Failed to create environment directory: {error}'
+            )
+            return None
+
+        if not self.save_map_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error(
+                'SLAM save_map service is not available.'
+            )
+            return None
+
+        request = SaveMap.Request()
+        request.name.data = str(environment_dir / 'map')
+
+        self.get_logger().info(
+            f'Saving environment map to: {request.name.data}'
+        )
+
+        return self.save_map_client.call_async(request)
+
     def handle_save_environment(self, request, response):
         future = self.save_environment(request.environment_name)
 
@@ -327,15 +366,9 @@ class EnvironmentManager(Node):
             'Finish mapping request received.'
         )
 
-        if not hasattr(self, 'mapping_process') or self.mapping_process is None:
+        if not self.save_map_client.wait_for_service(timeout_sec=2.0):
             response.success = False
-            response.message = 'No mapping process is running.'
-            return response
-
-        if self.mapping_process.poll() is not None:
-            self.mapping_process = None
-            response.success = False
-            response.message = 'Mapping process is not running.'
+            response.message = 'SLAM mapping service is not available.'
             return response
 
         self.mapping_finished = True
