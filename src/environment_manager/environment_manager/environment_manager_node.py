@@ -14,12 +14,16 @@ from nav2_msgs.srv import LoadMap
 from std_msgs.msg import String
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from lifecycle_msgs.srv import ChangeState, GetState
+import tf2_ros
+from rclpy.duration import Duration
 
 
 class EnvironmentManager(Node):
 
     def __init__(self):
         super().__init__('environment_manager')
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         self.environments_dir = (
             Path.home() / 'robotum-hri-github' / 'environments'
@@ -482,6 +486,26 @@ class EnvironmentManager(Node):
             )
             return False
 
+        # Save the robot's current pose BEFORE switching the map.
+        # The Gazebo robot stays where it is while the map changes.
+        try:
+            self.saved_robot_transform = self.tf_buffer.lookup_transform(
+                'map',
+                'base_link',
+                rclpy.time.Time(),
+                timeout=Duration(seconds=1.0)
+            )
+            self.get_logger().info(
+                f'Saved robot pose before map switch: '
+                f'x={self.saved_robot_transform.transform.translation.x:.3f}, '
+                f'y={self.saved_robot_transform.transform.translation.y:.3f}'
+            )
+        except Exception as error:
+            self.saved_robot_transform = None
+            self.get_logger().warning(
+                f'Could not save current robot pose before map switch: {error}'
+            )
+
         request = LoadMap.Request()
         request.map_url = str(map_path)
 
@@ -592,14 +616,27 @@ class EnvironmentManager(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'map'
 
-        msg.pose.pose.position.x = 0.0
-        msg.pose.pose.position.y = 0.0
-        msg.pose.pose.position.z = 0.0
+        transform = getattr(self, 'saved_robot_transform', None)
 
-        msg.pose.pose.orientation.x = 0.0
-        msg.pose.pose.orientation.y = 0.0
-        msg.pose.pose.orientation.z = 0.0
-        msg.pose.pose.orientation.w = 1.0
+        if transform is not None:
+            msg.pose.pose.position.x = transform.transform.translation.x
+            msg.pose.pose.position.y = transform.transform.translation.y
+            msg.pose.pose.position.z = transform.transform.translation.z
+
+            msg.pose.pose.orientation.x = transform.transform.rotation.x
+            msg.pose.pose.orientation.y = transform.transform.rotation.y
+            msg.pose.pose.orientation.z = transform.transform.rotation.z
+            msg.pose.pose.orientation.w = transform.transform.rotation.w
+        else:
+            # Safe fallback: preserve the previous behavior.
+            msg.pose.pose.position.x = 0.0
+            msg.pose.pose.position.y = 0.0
+            msg.pose.pose.position.z = 0.0
+
+            msg.pose.pose.orientation.x = 0.0
+            msg.pose.pose.orientation.y = 0.0
+            msg.pose.pose.orientation.z = 0.0
+            msg.pose.pose.orientation.w = 1.0
 
         # Reasonable covariance for a known simulated starting pose.
         msg.pose.covariance[0] = 0.25
