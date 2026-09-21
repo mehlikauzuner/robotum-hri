@@ -1,0 +1,7 @@
+{
+  "name": "perfect",
+  "type": "room",
+  "room": "perfect",
+  "map": "map.yaml",
+  "semantic_map": "semantic_map.json"
+}

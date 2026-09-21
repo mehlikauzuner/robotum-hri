@@ -1,0 +1,7 @@
+{
+  "name": "room2",
+  "type": "room",
+  "room": "room2",
+  "map": "map.yaml",
+  "semantic_map": "semantic_map.json"
+}

@@ -470,152 +470,43 @@ class EnvironmentManager(Node):
             return False
 
         self.get_logger().info(
-            f'Starting localization for environment: {environment_name}'
+            f'Loading map for environment: {environment_name}'
         )
         self.get_logger().info(
             f'Using map: {map_path}'
         )
 
-        if (
-            hasattr(self, 'localization_process')
-            and self.localization_process is not None
-            and self.localization_process.poll() is None
-        ):
-            self.get_logger().info(
-                'Stopping previous localization process group.'
+        if not self.load_map_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error(
+                'map_server/load_map service is not available.'
             )
+            return False
 
+        request = LoadMap.Request()
+        request.map_url = str(map_path)
+
+        future = self.load_map_client.call_async(request)
+
+        def after_map_load(future):
             try:
-                os.killpg(
-                    os.getpgid(self.localization_process.pid),
-                    signal.SIGTERM
-                )
+                result = future.result()
 
-                self.localization_process.wait(timeout=10)
-
-            except subprocess.TimeoutExpired:
-                self.get_logger().warning(
-                    'Localization process group did not stop in time. '
-                    'Sending SIGKILL.'
-                )
-
-                try:
-                    os.killpg(
-                        os.getpgid(self.localization_process.pid),
-                        signal.SIGKILL
-                    )
-                except ProcessLookupError:
-                    pass
-
-                self.localization_process.wait()
-
-            except ProcessLookupError:
-                pass
-
-            finally:
-                self.localization_process = None
-
-        self.slam_change_state_client = self.create_client(
-            ChangeState,
-            '/slam_toolbox/change_state'
-        )
-
-        self.slam_get_state_client = self.create_client(
-            GetState,
-            '/slam_toolbox/get_state'
-        )
-
-        if not self.slam_change_state_client.wait_for_service(timeout_sec=2.0):
-            self.get_logger().warning(
-                'SLAM lifecycle service not available. '
-                'Starting localization without deactivating SLAM.'
-            )
-            return self._start_localization_process(map_path)
-
-        if not self.slam_get_state_client.wait_for_service(timeout_sec=2.0):
-            self.get_logger().warning(
-                'SLAM get_state service not available. '
-                'Starting localization without deactivating SLAM.'
-            )
-            return self._start_localization_process(map_path)
-
-        state_future = self.slam_get_state_client.call_async(
-            GetState.Request()
-        )
-
-        def after_slam_state(state_future):
-            try:
-                state_result = state_future.result()
-                current_state = state_result.current_state
-
-                self.get_logger().info(
-                    f'SLAM current lifecycle state: '
-                    f'{current_state.id} ({current_state.label})'
-                )
-
-                # SLAM zaten inactive ise tekrar deactivate etme.
-                if current_state.id == 2:
+                if result.result == 0:
                     self.get_logger().info(
-                        'SLAM is already inactive. '
-                        'Starting localization directly.'
+                        f'Map loaded successfully: {map_path}'
                     )
-                    self._start_localization_process(map_path)
-                    return
-
-                # Sadece active durumundayken deactivate et.
-                if current_state.id != 3:
-                    self.get_logger().warning(
-                        f'SLAM is not active or inactive '
-                        f'(state={current_state.id}, '
-                        f'label={current_state.label}). '
-                        'Starting localization directly.'
+                    self.publish_initial_pose()
+                else:
+                    self.get_logger().error(
+                        f'Failed to load map: {map_path}'
                     )
-                    self._start_localization_process(map_path)
-                    return
-
-                request = ChangeState.Request()
-                request.transition.id = 4
-
-                deactivate_future = self.slam_change_state_client.call_async(
-                    request
-                )
-
-                def after_slam_deactivate(deactivate_future):
-                    try:
-                        result = deactivate_future.result()
-
-                        if result.success:
-                            self.get_logger().info(
-                                'SLAM successfully deactivated.'
-                            )
-                        else:
-                            self.get_logger().warning(
-                                'SLAM deactivate transition returned failure.'
-                            )
-
-                        self._start_localization_process(map_path)
-
-                    except Exception as error:
-                        self.get_logger().error(
-                            f'Failed to deactivate SLAM: {error}'
-                        )
-
-                deactivate_future.add_done_callback(
-                    after_slam_deactivate
-                )
-
-                self.get_logger().info(
-                    'Requested SLAM deactivation before localization.'
-                )
 
             except Exception as error:
                 self.get_logger().error(
-                    f'Failed to get SLAM lifecycle state: {error}'
+                    f'Failed to load map: {error}'
                 )
-                self._start_localization_process(map_path)
 
-        state_future.add_done_callback(after_slam_state)
-
+        future.add_done_callback(after_map_load)
         return True
 
 
