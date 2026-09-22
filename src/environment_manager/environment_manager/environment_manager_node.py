@@ -388,6 +388,7 @@ class EnvironmentManager(Node):
 
         return response
 
+
     def handle_map_save_result(self, environment_name, future):
         try:
             result = future.result()
@@ -442,13 +443,63 @@ class EnvironmentManager(Node):
                     )
 
                     try:
-                        self.mapping_process.terminate()
-                        self.mapping_process.wait(timeout=10)
+                        self.mapping_process.send_signal(signal.SIGTERM)
+                        self.mapping_process.wait(timeout=15)
                     except subprocess.TimeoutExpired:
+                        self.get_logger().warning(
+                            'Mapping supervisor did not exit in time. Sending SIGKILL.'
+                        )
                         self.mapping_process.kill()
                         self.mapping_process.wait()
                     finally:
                         self.mapping_process = None
+
+                self.get_logger().info(
+                    'Map saved successfully. Restarting localization and navigation...'
+                )
+
+                for name, service_name in [
+                    (
+                        'Navigation',
+                        '/lifecycle_manager_navigation/manage_nodes',
+                    ),
+                    (
+                        'Localization',
+                        '/lifecycle_manager_localization/manage_nodes',
+                    ),
+                ]:
+                    command = [
+                        'ros2',
+                        'service',
+                        'call',
+                        service_name,
+                        'nav2_msgs/srv/ManageLifecycleNodes',
+                        '{command: 2}',
+                    ]
+
+                    try:
+                        result = subprocess.run(
+                            command,
+                            cwd='/home/mehlika/robotum-hri-github',
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+
+                        if result.returncode == 0:
+                            self.get_logger().info(
+                                f'{name} restarted successfully.'
+                            )
+                        else:
+                            self.get_logger().error(
+                                f'Failed to restart {name}: '
+                                f'{result.stderr.strip()}'
+                            )
+
+                    except subprocess.TimeoutExpired:
+                        self.get_logger().error(
+                            f'{name} restart timed out.'
+                        )
 
                 self.mapping_finished = False
             else:

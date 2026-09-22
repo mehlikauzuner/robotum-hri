@@ -1,15 +1,17 @@
+import os
+import signal
 import subprocess
 import sys
 
 
 MANAGERS = [
     (
-        'Localization',
-        '/lifecycle_manager_localization/manage_nodes',
-    ),
-    (
         'Navigation',
         '/lifecycle_manager_navigation/manage_nodes',
+    ),
+    (
+        'Localization',
+        '/lifecycle_manager_localization/manage_nodes',
     ),
 ]
 
@@ -23,7 +25,7 @@ def shutdown_manager(name, service_name):
         'call',
         service_name,
         'nav2_msgs/srv/ManageLifecycleNodes',
-        '{command: 4}',
+        '{command: 1}',
     ]
 
     try:
@@ -32,7 +34,7 @@ def shutdown_manager(name, service_name):
             cwd='/home/mehlika/robotum-hri-github',
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=60,
         )
     except subprocess.TimeoutExpired:
         print(
@@ -43,13 +45,13 @@ def shutdown_manager(name, service_name):
 
     if result.returncode != 0:
         print(
-            f'[mapping_supervisor] Failed to shut down {name}: '
+            f'[mapping_supervisor] Failed to shutdown {name}: '
             f'{result.stderr.strip()}',
             file=sys.stderr,
         )
         return False
 
-    print(f'[mapping_supervisor] {name} shutdown completed.')
+    print(f'[mapping_supervisor] {name} shut down.')
     return True
 
 
@@ -67,6 +69,9 @@ def main():
     print('[mapping_supervisor] Starting SLAM mapping session...')
 
     try:
+        mapping_env = os.environ.copy()
+        mapping_env['FASTDDS_BUILTIN_TRANSPORTS'] = 'UDPv4'
+
         process = subprocess.Popen(
             [
                 'ros2',
@@ -75,6 +80,8 @@ def main():
                 'mapping_session.launch.py',
             ],
             cwd='/home/mehlika/robotum-hri-github',
+            env=mapping_env,
+            start_new_session=True,
         )
     except Exception as error:
         print(
@@ -82,6 +89,30 @@ def main():
             file=sys.stderr,
         )
         return 1
+
+    def handle_signal(signum, frame):
+        print(
+            f'[mapping_supervisor] Received signal {signum}. '
+            'Stopping mapping process group...'
+        )
+        try:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+                print(
+                    f'[mapping_supervisor] Mapping process group '
+                    f'{process.pid} terminated.'
+                )
+        except ProcessLookupError:
+            pass
+        except Exception as error:
+            print(
+                f'[mapping_supervisor] Failed to stop mapping process group: {error}',
+                file=sys.stderr,
+            )
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
 
     print(
         f'[mapping_supervisor] Mapping session started '
