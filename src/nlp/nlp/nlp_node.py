@@ -7,12 +7,6 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
-class NLPNode:
-
-    def __init__(self):
-        self.node = None
-
-
 class NLPNode(Node):
 
     def __init__(self):
@@ -37,9 +31,6 @@ class NLPNode(Node):
             10
         )
 
-        # Stores the previous clarification context.
-        # Example:
-        # {"type": "navigate_target", "original_command": "Go there."}
         self.pending_context = None
 
         self.get_logger().info("NLP Node Started.")
@@ -57,7 +48,146 @@ class NLPNode(Node):
             daemon=True
         ).start()
 
+    def publish_parsed(self, parsed_data):
+        output = String()
+        output.data = json.dumps(parsed_data)
+
+        self.publisher.publish(output)
+
+        self.get_logger().info(
+            f"Published to /parsed_command: {output.data}"
+        )
+
+    def publish_response(self, response):
+        output = String()
+        output.data = response
+
+        self.response_publisher.publish(output)
+
+        self.get_logger().info(
+            f"Published to /robot_response: {response}"
+        )
+
+    def deterministic_parse(self, command):
+        """
+        Handle common Robotum commands without Ollama.
+
+        Returns a parsed command dictionary when the command
+        is unambiguous. Returns None when Ollama is required.
+        """
+
+        text = command.strip()
+        normalized = text.lower()
+
+        # STOP
+        if normalized in {
+            "stop",
+            "halt",
+            "dur",
+            "dur robot",
+            "stop robot",
+        }:
+            return {
+                "status": "valid",
+                "action": "stop",
+            }
+
+        # FORWARD
+        if normalized in {
+            "forward",
+            "move forward",
+            "go forward",
+            "ileri",
+            "ileri git",
+        }:
+            return {
+                "status": "valid",
+                "action": "move",
+                "direction": "forward",
+            }
+
+        # BACKWARD
+        if normalized in {
+            "backward",
+            "move backward",
+            "go backward",
+            "geri",
+            "geri git",
+        }:
+            return {
+                "status": "valid",
+                "action": "move",
+                "direction": "backward",
+            }
+
+        # LEFT
+        if normalized in {
+            "left",
+            "turn left",
+            "rotate left",
+            "sol",
+            "sola dön",
+        }:
+            return {
+                "status": "valid",
+                "action": "rotate",
+                "direction": "left",
+            }
+
+        # RIGHT
+        if normalized in {
+            "right",
+            "turn right",
+            "rotate right",
+            "sağ",
+            "sağa dön",
+        }:
+            return {
+                "status": "valid",
+                "action": "rotate",
+                "direction": "right",
+            }
+
+        # NAVIGATION
+        navigation_prefixes = (
+            "go to ",
+            "move to ",
+            "navigate to ",
+            "drive to ",
+            "take me to ",
+            "git ",
+            "git to ",
+        )
+
+        for prefix in navigation_prefixes:
+            if normalized.startswith(prefix):
+                target = text[len(prefix):].strip()
+
+                if target:
+                    return {
+                        "status": "valid",
+                        "action": "navigate",
+                        "target": target,
+                    }
+
+        return None
+
     def process_command(self, command):
+
+        # First handle deterministic commands locally.
+        deterministic_result = self.deterministic_parse(command)
+
+        if deterministic_result is not None:
+            self.get_logger().info(
+                "Command handled locally. Ollama not required."
+            )
+
+            self.pending_context = None
+            self.publish_parsed(deterministic_result)
+            return
+
+        # Only commands that cannot be parsed locally
+        # are sent to Ollama.
         context_text = ""
 
         if self.pending_context is not None:
@@ -78,26 +208,23 @@ class NLPNode(Node):
             )
 
         prompt = (
-            "Extract the user's action and target. Return JSON only. "
-            "Navigation: "
+            "Parse the user's command. Return JSON only. "
+            "For navigation return "
             '{"status":"valid","action":"navigate","target":"TARGET"}. '
-            "Forward: "
+            "For forward return "
             '{"status":"valid","action":"move","direction":"forward"}. '
-            "Backward: "
+            "For backward return "
             '{"status":"valid","action":"move","direction":"backward"}. '
-            "Left rotation: "
+            "For left rotation return "
             '{"status":"valid","action":"rotate","direction":"left"}. '
-            "Right rotation: "
+            "For right rotation return "
             '{"status":"valid","action":"rotate","direction":"right"}. '
-            "Stop: "
+            "For stop return "
             '{"status":"valid","action":"stop"}. '
-            "For navigation, extract the target exactly as stated. "
-            "The target may be any person, object, place, or location. "
-            "Do not check whether the target exists and never invent coordinates. "
+            "For navigation, copy the target exactly. "
+            "Never generate coordinates. "
             'If the target is unclear, return '
             '{"status":"clarification","response":"Which target do you mean?"}. '
-            "If previous dialogue context exists, interpret the current message "
-            "as the answer to the clarification. "
             f"{context_text}"
             f"USER: {command}"
         )
@@ -118,10 +245,16 @@ class NLPNode(Node):
             headers={"Content-Type": "application/json"}
         )
 
-        self.get_logger().info("Sending command to Ollama...")
+        self.get_logger().info(
+            "Sending ambiguous command to Ollama..."
+        )
 
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=30
+            ) as response:
+
                 result = json.loads(
                     response.read().decode("utf-8")
                 )
@@ -132,62 +265,65 @@ class NLPNode(Node):
                 f"Ollama response: {parsed_command}"
             )
 
-            # Check the returned status so that dialogue context
-            # can be updated.
             try:
                 parsed_data = json.loads(parsed_command)
-                status = parsed_data.get("status")
-
-                if status == "clarification":
-                    self.pending_context = {
-                        "type": "navigate_target",
-                        "original_command": command
-                    }
-
-                    self.get_logger().info(
-                        "Clarification context saved."
-                    )
-
-                elif status == "valid":
-                    self.pending_context = None
-
-                    self.get_logger().info(
-                        "Dialogue context cleared after valid command."
-                    )
-
             except json.JSONDecodeError:
-                self.get_logger().warning(
+                self.get_logger().error(
                     "Ollama returned non-JSON output."
                 )
+                return
 
-            # Route the result according to its status.
-            if status == "valid":
-                output = String()
-                output.data = parsed_command
-                self.publisher.publish(output)
+            status = parsed_data.get(
+                "status",
+                "invalid"
+            )
+
+            if status == "clarification":
+
+                self.pending_context = {
+                    "type": "navigate_target",
+                    "original_command": command,
+                }
 
                 self.get_logger().info(
-                    f"Published to /parsed_command: {parsed_command}"
+                    "Clarification context saved."
                 )
 
-            elif status in ("clarification", "invalid"):
-                response = parsed_data.get("response", "")
+                self.publish_response(
+                    parsed_data.get(
+                        "response",
+                        "Which target do you mean?",
+                    )
+                )
 
-                output = String()
-                output.data = response
-                self.response_publisher.publish(output)
+            elif status == "valid":
+
+                self.pending_context = None
 
                 self.get_logger().info(
-                    f"Published to /robot_response: {response}"
+                    "Dialogue context cleared after valid command."
+                )
+
+                self.publish_parsed(parsed_data)
+
+            else:
+
+                self.publish_response(
+                    parsed_data.get(
+                        "response",
+                        "I could not understand the command.",
+                    )
                 )
 
         except Exception as e:
+
             self.get_logger().error(
                 f"Ollama request failed: {e}"
             )
 
 
 def main(args=None):
+
     rclpy.init(args=args)
 
     node = NLPNode()
