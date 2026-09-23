@@ -192,15 +192,14 @@ class NLPNode(Node):
 
         if self.pending_context is not None:
             context_text = (
-                "PREVIOUS DIALOGUE CONTEXT: "
-                "The previous user request required clarification. "
-                "The user is now answering that clarification. "
-                f"Previous user command: "
-                f"{self.pending_context['original_command']} "
-                "The previous assistant question was: "
-                "\"Which target do you mean?\" "
-                "Interpret the current user message as the answer "
-                "to that question if possible. "
+              "PREVIOUS DIALOGUE CONTEXT: "
+              f'The previous user command was: "{self.pending_context["original_command"]}". '
+              'The assistant asked: "Which target do you mean?". '
+              "The user is now answering that question. "
+              "Treat the current user message as the target they selected. "
+              "Extract the target from the current user message. "
+              "Do not ask for clarification again. "
+              "Return a valid navigation command using that target. "
             )
 
             self.get_logger().info(
@@ -225,8 +224,8 @@ class NLPNode(Node):
             "Never generate coordinates. "
             'If the target is unclear, return '
             '{"status":"clarification","response":"Which target do you mean?"}. '
+            f"USER: {command} "
             f"{context_text}"
-            f"USER: {command}"
         )
 
         payload = json.dumps({

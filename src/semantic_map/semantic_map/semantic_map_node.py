@@ -66,6 +66,12 @@ class SemanticMapNode(Node):
             10
         )
 
+        self.response_publisher = self.create_publisher(
+            String,
+            "/robot_response",
+            10
+        )
+
         self.add_object_service = self.create_service(
             AddSemanticObject,
             "/add_semantic_object",
@@ -247,6 +253,11 @@ class SemanticMapNode(Node):
 
         if target_key is None:
             self.get_logger().warning(f"Unknown target: {target}")
+
+            response = String()
+            response.data = f"I could not find {target} in the current environment."
+            self.response_publisher.publish(response)
+
             return
 
         obj = self.objects[target_key]
