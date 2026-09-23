@@ -395,6 +395,7 @@ class PlannerNode(Node):
         goal_handle = future.result()
 
         if not goal_handle.accepted:
+            self.current_goal_handle = None
             self.navigation_active = False
             self.get_logger().error(
                 "Navigation goal was REJECTED."
@@ -415,8 +416,8 @@ class PlannerNode(Node):
     def get_result_callback(self, future, target):
         result = future.result()
 
-        self.navigation_active = False
         self.current_goal_handle = None
+        self.navigation_active = False
 
         self.get_logger().info(
             f"Navigation finished with status: "

@@ -166,6 +166,12 @@ class EnvironmentManager(Node):
 
         self.current_environment_timer = self.create_timer(1.0, self.publish_current_environment)
 
+        # Initialize AMCL automatically when localization is launched externally.
+        self.initial_pose_timer = self.create_timer(
+            1.0,
+            self.check_amcl_and_publish_initial_pose,
+        )
+
 
     def publish_current_environment(self):
         if self.current_environment:

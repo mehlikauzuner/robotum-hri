@@ -24,6 +24,11 @@ def generate_launch_description():
             'map': map_file,
             'use_sim_time': 'true',
             'autostart': 'true',
+            'params_file': os.path.join(
+                nav2_bringup,
+                'params',
+                'nav2_params.yaml'
+            ),
         }.items()
     )
 
