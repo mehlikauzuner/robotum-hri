@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -12,8 +13,25 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    current_environment_file = Path(
+        '/home/mehlika/robotum-hri-github/environments/current_environment'
+    )
+
+    if current_environment_file.exists():
+        current_environment = current_environment_file.read_text(
+            encoding='utf-8'
+        ).strip()
+    else:
+        current_environment = 'test_environment'
+
+    if not current_environment:
+        current_environment = 'test_environment'
+
     declare_mode = DeclareLaunchArgument('mode', default_value='mapping')
-    declare_environment = DeclareLaunchArgument('environment', default_value='test_environment')
+    declare_environment = DeclareLaunchArgument(
+        'environment',
+        default_value=current_environment
+    )
     mode = LaunchConfiguration('mode')
     environment = LaunchConfiguration('environment')
 

@@ -12,7 +12,7 @@ from slam_toolbox.srv import SaveMap
 from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments, StartMapping, FinishMapping, DeleteEnvironment
 from nav2_msgs.srv import LoadMap
 from std_msgs.msg import String
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, PointStamped
 from lifecycle_msgs.srv import ChangeState, GetState
 import tf2_ros
 from rclpy.duration import Duration
@@ -35,6 +35,18 @@ class EnvironmentManager(Node):
         self.initial_pose_pub = self.create_publisher(
             PoseWithCovarianceStamped,
             '/initialpose',
+            10
+        )
+
+        self.declare_parameter('mode', 'mapping')
+        self.mode = self.get_parameter('mode').get_parameter_value().string_value
+
+        self.manual_initial_pose_pending = (self.mode == 'localization')
+
+        self.clicked_point_sub = self.create_subscription(
+            PointStamped,
+            '/clicked_point',
+            self.handle_clicked_point,
             10
         )
 
@@ -173,6 +185,37 @@ class EnvironmentManager(Node):
         )
 
 
+    def handle_clicked_point(self, msg):
+        if not self.manual_initial_pose_pending:
+            return
+
+        pose = PoseWithCovarianceStamped()
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.header.frame_id = 'map'
+
+        pose.pose.pose.position.x = msg.point.x
+        pose.pose.pose.position.y = msg.point.y
+        pose.pose.pose.position.z = 0.0
+
+        pose.pose.pose.orientation.x = 0.0
+        pose.pose.pose.orientation.y = 0.0
+        pose.pose.pose.orientation.z = 0.0
+        pose.pose.pose.orientation.w = 1.0
+
+        pose.pose.covariance[0] = 0.25
+        pose.pose.covariance[7] = 0.25
+        pose.pose.covariance[35] = 0.0685
+
+        self.initial_pose_pub.publish(pose)
+
+        self.manual_initial_pose_pending = False
+
+        self.get_logger().info(
+            f'Manual initial pose published: '
+            f'x={msg.point.x:.3f}, y={msg.point.y:.3f}'
+        )
+
+
     def publish_current_environment(self):
         if self.current_environment:
             msg = String()
@@ -265,6 +308,8 @@ class EnvironmentManager(Node):
                 f'Failed to select environment: {request.environment_name}'
             )
             return response
+
+        self.manual_initial_pose_pending = True
 
         map_future = self.load_environment_map(request.environment_name)
 
@@ -460,6 +505,17 @@ class EnvironmentManager(Node):
                     finally:
                         self.mapping_process = None
 
+                # Make the newly saved environment the active environment.
+                self.current_environment = environment_name
+                self.current_environment_file.write_text(
+                    environment_name,
+                    encoding='utf-8'
+                )
+
+                self.get_logger().info(
+                    f'Current environment updated to: {environment_name}'
+                )
+
                 self.get_logger().info(
                     'Map saved successfully. Restarting localization and navigation...'
                 )
@@ -506,6 +562,12 @@ class EnvironmentManager(Node):
                         self.get_logger().error(
                             f'{name} restart timed out.'
                         )
+
+                # Reload the newly saved environment map after localization is active.
+                self.get_logger().info(
+                    f'Loading newly saved map: {environment_name}'
+                )
+                self.load_environment_map(environment_name)
 
                 self.mapping_finished = False
             else:
