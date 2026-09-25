@@ -30,10 +30,12 @@ LoopClosureAssistant::LoopClosureAssistant(
   NodeT node,
   karto::Mapper * mapper,
   laser_utils::ScanHolder * scan_holder,
-  PausedState & state, ProcessType & processor_type)
+  PausedState & state, ProcessType & processor_type,
+  std::function<bool(const karto::Pose2 &)> update_manual_pose_callback)
 : mapper_(mapper), scan_holder_(scan_holder),
   interactive_mode_(false), state_(state),
   processor_type_(processor_type),
+  update_manual_pose_callback_(update_manual_pose_callback),
   clock_(node->get_clock()), logger_(node->get_logger()),
   parameters_interface_(node->get_node_parameters_interface())
 /*****************************************************************************/
@@ -72,6 +74,16 @@ LoopClosureAssistant::LoopClosureAssistant(
     "slam_toolbox/toggle_interactive_mode", std::bind(&LoopClosureAssistant::interactiveModeCallback,
     this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
+  ssSetManualPose_ = node->template create_service<slam_toolbox::srv::SetManualPose>(
+    "slam_toolbox/set_manual_pose", std::bind(&LoopClosureAssistant::setManualPoseCallback,
+    this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+
+  new_node_event_sub_ =
+    node->template create_subscription<slam_toolbox::msg::NewNodeEvent>(
+    "slam_toolbox/new_node_event", 10,
+    std::bind(&LoopClosureAssistant::newNodeEventCallback,
+    this, std::placeholders::_1));
+
 
   marker_publisher_ = node->template create_publisher<visualization_msgs::msg::MarkerArray>(
     "slam_toolbox/graph_visualization", rclcpp::QoS(1));
@@ -83,6 +95,23 @@ void LoopClosureAssistant::setMapper(karto::Mapper * mapper)
 /*****************************************************************************/
 {
   mapper_ = mapper;
+}
+
+/*****************************************************************************/
+void LoopClosureAssistant::newNodeEventCallback(
+  const slam_toolbox::msg::NewNodeEvent::SharedPtr msg)
+/*****************************************************************************/
+{
+  if (!msg) {
+    return;
+  }
+
+  latest_node_id_ = msg->new_node_id;
+
+  RCLCPP_DEBUG(
+    logger_,
+    "LoopClosureAssistant: latest SLAM node updated to %d.",
+    latest_node_id_);
 }
 
 /*****************************************************************************/
@@ -359,6 +388,55 @@ bool LoopClosureAssistant::interactiveModeCallback(
 }
 
 /*****************************************************************************/
+bool LoopClosureAssistant::setManualPoseCallback(
+  const std::shared_ptr<rmw_request_id_t> request_header,
+  const std::shared_ptr<slam_toolbox::srv::SetManualPose::Request> req,
+  std::shared_ptr<slam_toolbox::srv::SetManualPose::Response> resp)
+/*****************************************************************************/
+{
+  (void)request_header;
+
+  resp->success = false;
+
+  if (latest_node_id_ < 0) {
+    RCLCPP_WARN(
+      logger_,
+      "Cannot set manual pose: no SLAM node has been received yet.");
+    return true;
+  }
+
+  if (solver_ == nullptr || mapper_ == nullptr) {
+    RCLCPP_ERROR(
+      logger_,
+      "Cannot set manual pose: SLAM solver or mapper is not available.");
+    return true;
+  }
+
+  const Eigen::Vector3d pose(req->x, req->y, req->yaw);
+
+  RCLCPP_INFO(
+    logger_,
+    "Setting latest SLAM node %d to manual pose: "
+    "x=%.3f, y=%.3f, yaw=%.3f rad.",
+    latest_node_id_, req->x, req->y, req->yaw);
+
+  moveNode(latest_node_id_, pose);
+  mapper_->CorrectPoses();
+
+  if (update_manual_pose_callback_ &&
+      !update_manual_pose_callback_(karto::Pose2(req->x, req->y, req->yaw))) {
+    RCLCPP_WARN(
+      logger_,
+      "Manual SLAM pose was updated, but TF pose could not be refreshed.");
+  }
+
+  publishGraph();
+
+  resp->success = true;
+  return true;
+}
+
+/*****************************************************************************/
 void LoopClosureAssistant::moveNode(
   const int & id, const Eigen::Vector3d & pose)
 /*****************************************************************************/
@@ -412,9 +490,9 @@ void LoopClosureAssistant::addMovedNodes(const int & id, Eigen::Vector3d vec)
 // explicit instantiation for the supported template types
 template LoopClosureAssistant::LoopClosureAssistant(
   rclcpp::Node::SharedPtr, karto::Mapper *, laser_utils::ScanHolder *, PausedState &,
-  ProcessType &);
+  ProcessType &, std::function<bool(const karto::Pose2 &)>);
 template LoopClosureAssistant::LoopClosureAssistant(
   rclcpp_lifecycle::LifecycleNode::SharedPtr, karto::Mapper *, laser_utils::ScanHolder *,
-  PausedState &, ProcessType &);
+  PausedState &, ProcessType &, std::function<bool(const karto::Pose2 &)>);
 
 }  // namespace loop_closure_assistant

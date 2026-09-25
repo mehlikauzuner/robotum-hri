@@ -122,6 +122,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   srv/Reset.srv
   srv/ClearQueue.srv
   srv/ToggleInteractive.srv
+  srv/SetManualPose.srv
   srv/Clear.srv
   srv/SaveMap.srv
   srv/LoopClosure.srv

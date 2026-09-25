@@ -145,7 +145,10 @@ CallbackReturn SlamToolbox::on_configure(const rclcpp_lifecycle::State &)
   closure_assistant_ =
     std::make_unique<loop_closure_assistant::LoopClosureAssistant>(
     shared_from_this(), smapper_->getMapper(), scan_holder_.get(),
-    state_, processor_type_);
+    state_, processor_type_,
+    [this](const karto::Pose2 & pose) {
+      return this->updateManualPose(pose);
+    });
   loadPoseGraphByParams();
   return CallbackReturn::SUCCESS;
 }
@@ -724,6 +727,26 @@ bool SlamToolbox::updateMap()
 }
 
 /*****************************************************************************/
+bool SlamToolbox::updateManualPose(const karto::Pose2 & manual_pose)
+/*****************************************************************************/
+{
+  if (!last_odom_pose_valid_) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Cannot update manual pose: no odometry pose is available yet.");
+    return false;
+  }
+
+  setTransformFromPoses(
+    manual_pose,
+    last_odom_pose_,
+    last_odom_stamp_,
+    false);
+
+  return true;
+}
+
+/*****************************************************************************/
 tf2::Stamped<tf2::Transform> SlamToolbox::setTransformFromPoses(
   const Pose2 & corrected_pose,
   const Pose2 & odom_pose,
@@ -901,6 +924,11 @@ LocalizedRangeScan * SlamToolbox::addScanImpl(
   Pose2 & odom_pose)
 /*****************************************************************************/
 {
+  // Keep the latest odometry pose available for manual SLAM pose updates.
+  last_odom_pose_ = odom_pose;
+  last_odom_stamp_ = rclcpp::Time(scan->header.stamp);
+  last_odom_pose_valid_ = true;
+
   // get our localized range scan
   LocalizedRangeScan * range_scan = getLocalizedRangeScan(
     laser, scan, odom_pose);

@@ -34,6 +34,8 @@
 #include "interactive_markers/menu_handler.hpp"
 
 #include "slam_toolbox/toolbox_types.hpp"
+#include "slam_toolbox/msg/new_node_event.hpp"
+#include "slam_toolbox/srv/set_manual_pose.hpp"
 #include "slam_toolbox/laser_utils.hpp"
 #include "slam_toolbox/visualization_utils.hpp"
 
@@ -49,7 +51,8 @@ public:
   LoopClosureAssistant(
     NodeT node, karto::Mapper * mapper,
     laser_utils::ScanHolder * scan_holder, PausedState & state,
-    ProcessType & processor_type);
+    ProcessType & processor_type,
+    std::function<bool(const karto::Pose2 &)> update_manual_pose_callback);
 
   void clearMovedNodes();
   void processInteractiveFeedback(
@@ -70,6 +73,13 @@ private:
     const std::shared_ptr<rmw_request_id_t> request_header,
     const std::shared_ptr<slam_toolbox::srv::ToggleInteractive::Request>  req,
     std::shared_ptr<slam_toolbox::srv::ToggleInteractive::Response> resp);
+  bool setManualPoseCallback(
+    const std::shared_ptr<rmw_request_id_t> request_header,
+    const std::shared_ptr<slam_toolbox::srv::SetManualPose::Request> req,
+    std::shared_ptr<slam_toolbox::srv::SetManualPose::Response> resp);
+
+  void newNodeEventCallback(
+    const slam_toolbox::msg::NewNodeEvent::SharedPtr msg);
 
   void moveNode(const int& id, const Eigen::Vector3d& pose);
   void addMovedNodes(const int& id, Eigen::Vector3d vec);
@@ -81,6 +91,9 @@ private:
   rclcpp::Service<slam_toolbox::srv::Clear>::SharedPtr ssClear_manual_;
   rclcpp::Service<slam_toolbox::srv::LoopClosure>::SharedPtr ssLoopClosure_;
   rclcpp::Service<slam_toolbox::srv::ToggleInteractive>::SharedPtr ssInteractive_;
+  rclcpp::Service<slam_toolbox::srv::SetManualPose>::SharedPtr ssSetManualPose_;
+  rclcpp::Subscription<slam_toolbox::msg::NewNodeEvent>::SharedPtr new_node_event_sub_;
+  int latest_node_id_ = -1;
   boost::mutex moved_nodes_mutex_;
   std::map<int, Eigen::Vector3d> moved_nodes_;
   karto::Mapper * mapper_;
@@ -91,6 +104,7 @@ private:
   std::string map_frame_;
   PausedState & state_;
   ProcessType & processor_type_;
+  std::function<bool(const karto::Pose2 &)> update_manual_pose_callback_;
 
   rclcpp::Clock::SharedPtr clock_;
   rclcpp::Logger logger_;

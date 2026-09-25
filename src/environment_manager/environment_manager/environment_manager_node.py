@@ -5,10 +5,11 @@ import re
 import subprocess
 import os
 import signal
+import math
 
 import rclpy
 from rclpy.node import Node
-from slam_toolbox.srv import SaveMap
+from slam_toolbox.srv import SaveMap, SetManualPose
 from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments, StartMapping, FinishMapping, DeleteEnvironment
 from nav2_msgs.srv import LoadMap
 from std_msgs.msg import String
@@ -42,6 +43,13 @@ class EnvironmentManager(Node):
         self.mode = self.get_parameter('mode').get_parameter_value().string_value
 
         self.manual_initial_pose_pending = (self.mode == 'localization')
+
+        # Mapping sırasında kullanıcıdan alınacak başlangıç pozu.
+        # İlk tıklama: robot konumu
+        # İkinci tıklama: robotun baktığı yönü gösteren nokta
+        self.mapping_initial_pose_point = None
+        self.mapping_initial_pose_yaw = None
+        self.mapping_active = False
 
         self.clicked_point_sub = self.create_subscription(
             PointStamped,
@@ -136,6 +144,11 @@ class EnvironmentManager(Node):
             '/slam_toolbox/save_map'
         )
 
+        self.set_manual_pose_client = self.create_client(
+            SetManualPose,
+            '/slam_toolbox/set_manual_pose'
+        )
+
         environments = sorted(
             path.name
             for path in self.environments_dir.iterdir()
@@ -186,35 +199,117 @@ class EnvironmentManager(Node):
 
 
     def handle_clicked_point(self, msg):
-        if not self.manual_initial_pose_pending:
+        # Localization mode:
+        # Existing manual initial pose behavior remains unchanged.
+        if self.manual_initial_pose_pending:
+            pose = PoseWithCovarianceStamped()
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.header.frame_id = 'map'
+
+            pose.pose.pose.position.x = msg.point.x
+            pose.pose.pose.position.y = msg.point.y
+            pose.pose.pose.position.z = 0.0
+
+            pose.pose.pose.orientation.x = 0.0
+            pose.pose.pose.orientation.y = 0.0
+            pose.pose.pose.orientation.z = 0.0
+            pose.pose.pose.orientation.w = 1.0
+
+            pose.pose.covariance[0] = 0.25
+            pose.pose.covariance[7] = 0.25
+            pose.pose.covariance[35] = 0.0685
+
+            self.initial_pose_pub.publish(pose)
+
+            self.manual_initial_pose_pending = False
+
+            self.get_logger().info(
+                f'Manual initial pose published: '
+                f'x={msg.point.x:.3f}, y={msg.point.y:.3f}'
+            )
             return
 
-        pose = PoseWithCovarianceStamped()
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.header.frame_id = 'map'
+        # Mapping mode:
+        # First click = robot position.
+        # Second click = point defining robot heading.
+        if self.mapping_active:
+            if self.mapping_initial_pose_point is None:
+                self.mapping_initial_pose_point = (
+                    msg.point.x,
+                    msg.point.y
+                )
 
-        pose.pose.pose.position.x = msg.point.x
-        pose.pose.pose.position.y = msg.point.y
-        pose.pose.pose.position.z = 0.0
+                self.get_logger().info(
+                    f'Mapping initial position selected: '
+                    f'x={msg.point.x:.3f}, y={msg.point.y:.3f}. '
+                    f'Click a second point to define robot heading.'
+                )
+                return
 
-        pose.pose.pose.orientation.x = 0.0
-        pose.pose.pose.orientation.y = 0.0
-        pose.pose.pose.orientation.z = 0.0
-        pose.pose.pose.orientation.w = 1.0
+            x1, y1 = self.mapping_initial_pose_point
+            x2 = msg.point.x
+            y2 = msg.point.y
 
-        pose.pose.covariance[0] = 0.25
-        pose.pose.covariance[7] = 0.25
-        pose.pose.covariance[35] = 0.0685
+            dx = x2 - x1
+            dy = y2 - y1
 
-        self.initial_pose_pub.publish(pose)
+            if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+                self.get_logger().warning(
+                    'Second mapping click is too close to the first click. '
+                    'Please click again to define the heading.'
+                )
+                return
 
-        self.manual_initial_pose_pending = False
+            self.mapping_initial_pose_yaw = math.atan2(dy, dx)
 
-        self.get_logger().info(
-            f'Manual initial pose published: '
-            f'x={msg.point.x:.3f}, y={msg.point.y:.3f}'
-        )
+            self.get_logger().info(
+                f'Mapping initial pose selected: '
+                f'x={x1:.3f}, y={y1:.3f}, '
+                f'yaw={math.degrees(self.mapping_initial_pose_yaw):.1f} deg'
+            )
 
+            if not self.set_manual_pose_client.wait_for_service(timeout_sec=2.0):
+                self.get_logger().error(
+                    'SLAM manual pose service is not available.'
+                )
+                return
+
+            request = SetManualPose.Request()
+            request.x = x1
+            request.y = y1
+            request.yaw = self.mapping_initial_pose_yaw
+
+            future = self.set_manual_pose_client.call_async(request)
+            future.add_done_callback(
+                self.handle_manual_pose_result
+            )
+
+            self.get_logger().info(
+                'Manual mapping pose sent to SLAM.'
+            )
+
+            return
+
+    def handle_manual_pose_result(self, future):
+        try:
+            result = future.result()
+
+            if result.success:
+                self.get_logger().info(
+                    'SLAM manual mapping pose applied successfully.'
+                )
+
+                self.mapping_initial_pose_point = None
+                self.mapping_initial_pose_yaw = None
+            else:
+                self.get_logger().error(
+                    'SLAM rejected the manual mapping pose.'
+                )
+
+        except Exception as error:
+            self.get_logger().error(
+                f'Failed to apply manual mapping pose: {error}'
+            )
 
     def publish_current_environment(self):
         if self.current_environment:
@@ -379,6 +474,12 @@ class EnvironmentManager(Node):
         self.get_logger().info(
             'Start mapping request received.'
         )
+
+        # Reset mapping initial pose selection for a new mapping session.
+        self.mapping_initial_pose_point = None
+        self.mapping_initial_pose_yaw = None
+        self.mapping_active = True
+        self.manual_initial_pose_pending = False
 
         if hasattr(self, 'mapping_process') and self.mapping_process is not None:
             if self.mapping_process.poll() is None:
@@ -735,27 +836,77 @@ class EnvironmentManager(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'map'
 
-        transform = getattr(self, 'saved_robot_transform', None)
+        mapping_point = getattr(
+            self,
+            'mapping_initial_pose_point',
+            None
+        )
+        mapping_yaw = getattr(
+            self,
+            'mapping_initial_pose_yaw',
+            None
+        )
 
-        if transform is not None:
-            msg.pose.pose.position.x = transform.transform.translation.x
-            msg.pose.pose.position.y = transform.transform.translation.y
-            msg.pose.pose.position.z = transform.transform.translation.z
-
-            msg.pose.pose.orientation.x = transform.transform.rotation.x
-            msg.pose.pose.orientation.y = transform.transform.rotation.y
-            msg.pose.pose.orientation.z = transform.transform.rotation.z
-            msg.pose.pose.orientation.w = transform.transform.rotation.w
-        else:
-            # Safe fallback: preserve the previous behavior.
-            msg.pose.pose.position.x = 0.0
-            msg.pose.pose.position.y = 0.0
+        if mapping_point is not None and mapping_yaw is not None:
+            # Use the pose selected by the user during mapping.
+            msg.pose.pose.position.x = mapping_point[0]
+            msg.pose.pose.position.y = mapping_point[1]
             msg.pose.pose.position.z = 0.0
 
             msg.pose.pose.orientation.x = 0.0
             msg.pose.pose.orientation.y = 0.0
-            msg.pose.pose.orientation.z = 0.0
-            msg.pose.pose.orientation.w = 1.0
+            msg.pose.pose.orientation.z = math.sin(mapping_yaw / 2.0)
+            msg.pose.pose.orientation.w = math.cos(mapping_yaw / 2.0)
+
+            self.get_logger().info(
+                f'Using mapping-selected initial pose: '
+                f'x={mapping_point[0]:.3f}, '
+                f'y={mapping_point[1]:.3f}, '
+                f'yaw={math.degrees(mapping_yaw):.1f} deg'
+            )
+
+            # Consume the mapping-selected pose so it cannot affect
+            # a later Change Environment operation.
+            self.mapping_initial_pose_point = None
+            self.mapping_initial_pose_yaw = None
+
+        else:
+            transform = getattr(self, 'saved_robot_transform', None)
+
+            if transform is not None:
+                msg.pose.pose.position.x = (
+                    transform.transform.translation.x
+                )
+                msg.pose.pose.position.y = (
+                    transform.transform.translation.y
+                )
+                msg.pose.pose.position.z = (
+                    transform.transform.translation.z
+                )
+
+                msg.pose.pose.orientation.x = (
+                    transform.transform.rotation.x
+                )
+                msg.pose.pose.orientation.y = (
+                    transform.transform.rotation.y
+                )
+                msg.pose.pose.orientation.z = (
+                    transform.transform.rotation.z
+                )
+                msg.pose.pose.orientation.w = (
+                    transform.transform.rotation.w
+                )
+
+            else:
+                # Safe fallback: preserve the previous behavior.
+                msg.pose.pose.position.x = 0.0
+                msg.pose.pose.position.y = 0.0
+                msg.pose.pose.position.z = 0.0
+
+                msg.pose.pose.orientation.x = 0.0
+                msg.pose.pose.orientation.y = 0.0
+                msg.pose.pose.orientation.z = 0.0
+                msg.pose.pose.orientation.w = 1.0
 
         # Reasonable covariance for a known simulated starting pose.
         msg.pose.covariance[0] = 0.25
@@ -765,10 +916,8 @@ class EnvironmentManager(Node):
         self.initial_pose_pub.publish(msg)
 
         self.get_logger().info(
-            'Initial pose published to AMCL: x=0.0, y=0.0, yaw=0.0'
+            'Initial pose published to AMCL.'
         )
-
-
 
     def select_environment(self, environment_name):
         if not re.fullmatch(r'[A-Za-z0-9_-]+', environment_name):
