@@ -42,6 +42,7 @@ class RobotStatusNode(Node):
             return
 
         self.current_action = response
+        self.status = "idle"
 
         if response.lower().startswith("i could not reach"):
             self.error = response

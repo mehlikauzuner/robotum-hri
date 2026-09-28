@@ -53,6 +53,12 @@ class PlannerNode(Node):
         self.navigation_active = False
         self.current_goal_handle = None
 
+        # Stuck detection
+        self.last_distance_remaining = None
+        self.last_robot_yaw = None
+        self.last_progress_time = None
+        self.stuck_completion = None
+
         self.stop_subscription = self.create_subscription(
             Empty,
             "/stop_navigation",
@@ -75,6 +81,7 @@ class PlannerNode(Node):
         # Latest robot position in odom frame
         self.robot_x = None
         self.robot_y = None
+        self.robot_yaw = None
 
         self.odom_subscription = self.create_subscription(
             Odometry,
@@ -92,6 +99,13 @@ class PlannerNode(Node):
     def odom_callback(self, msg):
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
+
+        q = msg.pose.pose.orientation
+
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+
+        self.robot_yaw = math.atan2(siny_cosp, cosy_cosp)
 
 
     def direct_move_control(self):
@@ -351,6 +365,12 @@ class PlannerNode(Node):
         self.navigation_active = True
         self.current_target = target
 
+        # Reset stuck timer for the new navigation goal
+        self.last_distance_remaining = None
+        self.last_robot_yaw = None
+        self.last_progress_time = None
+        self.stuck_completion = None
+
         self.get_logger().info(
             f"Sending navigation goal: "
             f"x={x:.2f}, y={y:.2f}"
@@ -428,6 +448,31 @@ class PlannerNode(Node):
             f"Result: {result.result}"
         )
 
+        if self.stuck_completion is True:
+            response = f"I have arrived at {target}."
+
+            self.publish_response(response)
+            self.publish_status_event(
+                "completed",
+                response
+            )
+
+            self.stuck_completion = None
+            return
+
+        if self.stuck_completion is False:
+            response = f"I could not reach {target}."
+
+            self.publish_response(response)
+            self.publish_status_event(
+                "failed",
+                response,
+                "Navigation was stuck for 15 seconds."
+            )
+
+            self.stuck_completion = None
+            return
+
         if result.status == 4:
             response = f"I have arrived at {target}."
 
@@ -452,10 +497,75 @@ class PlannerNode(Node):
     def feedback_callback(self, feedback_msg):
 
         feedback = feedback_msg.feedback
+        distance = round(feedback.distance_remaining, 2)
+        now = self.get_clock().now().nanoseconds / 1e9
+
+        if not self.navigation_active:
+            return
+
+        yaw_changed = False
+
+        if self.robot_yaw is not None:
+            if self.last_robot_yaw is None:
+                self.last_robot_yaw = self.robot_yaw
+            else:
+                yaw_difference = abs(
+                    math.atan2(
+                        math.sin(self.robot_yaw - self.last_robot_yaw),
+                        math.cos(self.robot_yaw - self.last_robot_yaw)
+                    )
+                )
+
+                # Ignore very small orientation noise (~1 degree).
+                if yaw_difference >= math.radians(1.0):
+                    yaw_changed = True
+                    self.last_robot_yaw = self.robot_yaw
+
+        if self.last_distance_remaining is None:
+            self.last_distance_remaining = distance
+            self.last_progress_time = now
+
+        elif distance != self.last_distance_remaining:
+            self.last_distance_remaining = distance
+            self.last_progress_time = now
+
+        elif yaw_changed:
+            self.last_progress_time = now
+
+        elif now - self.last_progress_time >= 15.0:
+            self.get_logger().warning(
+                f"Distance remained at {distance:.2f} m "
+                f"and robot orientation did not change for 15 seconds."
+            )
+
+            if self.current_goal_handle is not None:
+                goal_handle = self.current_goal_handle
+
+                if distance <= self.safe_approach_distance:
+                    self.get_logger().info(
+                        "Robot is within 30 cm. Treating navigation as completed."
+                    )
+                    self.stuck_completion = True
+                else:
+                    self.get_logger().warning(
+                        "Robot is still farther than 30 cm. Treating navigation as failed."
+                    )
+                    self.stuck_completion = False
+
+                self.navigation_active = False
+                goal_handle.cancel_goal_async()
+
+            self.last_distance_remaining = None
+            self.last_robot_yaw = None
+            self.last_progress_time = None
 
         self.get_logger().info(
             f"Distance remaining: "
-            f"{feedback.distance_remaining:.2f} m"
+            f"{feedback.distance_remaining:.2f} m, "
+            f"Yaw: "
+            f"{math.degrees(self.robot_yaw):.1f} deg"
+            if self.robot_yaw is not None
+            else f"Distance remaining: {feedback.distance_remaining:.2f} m"
         )
 
 

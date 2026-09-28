@@ -39,6 +39,7 @@ function ExamplePanel({ context }: Props): ReactElement {
   const audioChunksRef = useRef<Blob[]>([]);
 
   const commandQueueRef = useRef<string[]>([]);
+  const queueDelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeCommandRef = useRef<string | null>(null);
 
   const saveSemanticObject = async () => {
@@ -284,6 +285,15 @@ function ExamplePanel({ context }: Props): ReactElement {
 
     const nextCommand = commandQueueRef.current.shift();
 
+    console.log(
+      "QUEUE PROGRESSION:",
+      {
+        nextCommand,
+        activeCommand: activeCommandRef.current,
+        remainingQueue: commandQueueRef.current,
+      }
+    );
+
     setQueue([...commandQueueRef.current]);
 
     if (!nextCommand) {
@@ -354,10 +364,34 @@ function ExamplePanel({ context }: Props): ReactElement {
 
             // Queue progression is based on structured status,
             // not on the wording of the robot response.
-            if (
-              status.status === "completed" ||
-              status.status === "failed"
-            ) {
+            if (status.status === "completed") {
+              console.log("QUEUE: Command completed. Waiting 10 seconds...");
+
+              setCurrentAction("I have arrived. Waiting 10 seconds...");
+
+              if (queueDelayTimerRef.current !== null) {
+                clearTimeout(queueDelayTimerRef.current);
+              }
+
+              queueDelayTimerRef.current = setTimeout(() => {
+                console.log(
+                  "QUEUE: 10-second wait finished. Processing next command."
+                );
+
+                queueDelayTimerRef.current = null;
+                processNextCommand();
+              }, 10000);
+
+            } else if (status.status === "failed") {
+              console.log(
+                "QUEUE: Command failed. Processing next command immediately."
+              );
+
+              if (queueDelayTimerRef.current !== null) {
+                clearTimeout(queueDelayTimerRef.current);
+                queueDelayTimerRef.current = null;
+              }
+
               processNextCommand();
             }
 
@@ -514,6 +548,11 @@ function ExamplePanel({ context }: Props): ReactElement {
       return;
     }
 
+    if (queueDelayTimerRef.current !== null) {
+      clearTimeout(queueDelayTimerRef.current);
+      queueDelayTimerRef.current = null;
+    }
+
     context.publish("/stop_navigation", {});
 
     activeCommandRef.current = null;
@@ -535,6 +574,15 @@ function ExamplePanel({ context }: Props): ReactElement {
       );
       return;
     }
+
+    console.log(
+      "SEND COMMAND:",
+      {
+        command: trimmedCommand,
+        activeCommand: activeCommandRef.current,
+        queue: commandQueueRef.current,
+      }
+    );
 
     if (!activeCommandRef.current) {
       activeCommandRef.current = trimmedCommand;

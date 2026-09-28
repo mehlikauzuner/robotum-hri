@@ -72,6 +72,12 @@ class SemanticMapNode(Node):
             10
         )
 
+        self.status_event_publisher = self.create_publisher(
+            String,
+            "/robot_status_event",
+            10
+        )
+
         self.add_object_service = self.create_service(
             AddSemanticObject,
             "/add_semantic_object",
@@ -254,9 +260,21 @@ class SemanticMapNode(Node):
         if target_key is None:
             self.get_logger().warning(f"Unknown target: {target}")
 
+            response_text = (
+                f"I could not find {target} in the current environment."
+            )
+
             response = String()
-            response.data = f"I could not find {target} in the current environment."
+            response.data = response_text
             self.response_publisher.publish(response)
+
+            status_event = String()
+            status_event.data = json.dumps({
+                "current_action": response_text,
+                "status": "failed",
+                "error": response_text
+            })
+            self.status_event_publisher.publish(status_event)
 
             return
 
