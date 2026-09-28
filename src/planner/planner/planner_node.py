@@ -9,6 +9,7 @@ from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
 import math
 from nav2_msgs.action import NavigateToPose
+from environment_manager_interfaces.srv import SetNavigationGoal
 
 
 class PlannerNode(Node):
@@ -41,6 +42,12 @@ class PlannerNode(Node):
             self,
             NavigateToPose,
             "/navigate_to_pose"
+        )
+
+        self.manual_goal_service = self.create_service(
+            SetNavigationGoal,
+            "/set_navigation_goal",
+            self.manual_navigation_goal_callback
         )
 
         self.cmd_vel_publisher = self.create_publisher(
@@ -95,6 +102,35 @@ class PlannerNode(Node):
             0.05,
             self.direct_move_control
         )
+
+    def manual_navigation_goal_callback(self, request, response):
+        x = float(request.x)
+        y = float(request.y)
+
+        if self.navigation_active:
+            response.success = False
+            response.message = "Navigation is already active."
+            self.get_logger().warn(
+                "Ignoring manual navigation goal because navigation is already active."
+            )
+            return response
+
+        self.get_logger().info(
+            f"Manual navigation goal received: x={x:.3f}, y={y:.3f}"
+        )
+
+        self.send_navigation_goal(
+            x,
+            y,
+            "the selected location"
+        )
+
+        response.success = True
+        response.message = (
+            f"Navigation goal sent: x={x:.3f}, y={y:.3f}"
+        )
+
+        return response
 
     def odom_callback(self, msg):
         self.robot_x = msg.pose.pose.position.x

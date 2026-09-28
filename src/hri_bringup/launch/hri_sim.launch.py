@@ -163,6 +163,12 @@ def generate_launch_description():
     environment_manager_node = Node(
         package='environment_manager',
         executable='environment_manager_node',
+        parameters=[
+            {
+                'mode': mode,
+                'environment': environment,
+            }
+        ],
         output='screen'
     )
 

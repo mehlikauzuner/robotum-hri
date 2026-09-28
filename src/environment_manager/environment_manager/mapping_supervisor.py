@@ -52,6 +52,17 @@ def shutdown_manager(name, service_name):
         return False
 
     print(f'[mapping_supervisor] {name} shut down.')
+
+    # Give lifecycle nodes time to fully deactivate their publishers
+    # before starting a new SLAM mapping session.
+    if name == 'Localization':
+        import time
+        print(
+            '[mapping_supervisor] Waiting for localization map publisher '
+            'to fully deactivate...'
+        )
+        time.sleep(3)
+
     return True
 
 

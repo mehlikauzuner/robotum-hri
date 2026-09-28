@@ -8,6 +8,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SelectEnvironment.srv"
   "srv/SaveEnvironment.srv"
   "srv/AddSemanticObject.srv"
+  "srv/SetNavigationGoal.srv"
   "srv/ListEnvironments.srv"
   "srv/StartMapping.srv"
         "srv/FinishMapping.srv"

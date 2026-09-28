@@ -10,7 +10,7 @@ import math
 import rclpy
 from rclpy.node import Node
 from slam_toolbox.srv import SaveMap, SetManualPose
-from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments, StartMapping, FinishMapping, DeleteEnvironment
+from environment_manager_interfaces.srv import SelectEnvironment, SaveEnvironment, ListEnvironments, StartMapping, FinishMapping, DeleteEnvironment, SetNavigationGoal
 from nav2_msgs.srv import LoadMap
 from std_msgs.msg import String
 from geometry_msgs.msg import PoseWithCovarianceStamped, PointStamped
@@ -42,6 +42,13 @@ class EnvironmentManager(Node):
         self.declare_parameter('mode', 'mapping')
         self.mode = self.get_parameter('mode').get_parameter_value().string_value
 
+        self.declare_parameter('environment', '')
+        self.launch_environment = (
+            self.get_parameter('environment')
+            .get_parameter_value()
+            .string_value
+        )
+
         self.manual_initial_pose_pending = (self.mode == 'localization')
 
         # Localization sırasında kullanıcıdan alınacak başlangıç pozu.
@@ -57,6 +64,15 @@ class EnvironmentManager(Node):
         self.mapping_initial_pose_yaw = None
         self.mapping_active = False
 
+        self.interaction_mode = "none"
+
+        self.interaction_mode_sub = self.create_subscription(
+            String,
+            '/interaction_mode',
+            self.handle_interaction_mode,
+            10
+        )
+
         self.clicked_point_sub = self.create_subscription(
             PointStamped,
             '/clicked_point',
@@ -69,13 +85,32 @@ class EnvironmentManager(Node):
             '/amcl/get_state'
         )
 
+        self.navigation_goal_client = self.create_client(
+            SetNavigationGoal,
+            '/set_navigation_goal'
+        )
+
         self.current_environment_file = (
             self.environments_dir / 'current_environment'
         )
 
         self.current_environment = None
 
-        if self.current_environment_file.exists():
+        if self.launch_environment:
+            current_dir = self.environments_dir / self.launch_environment
+
+            if current_dir.is_dir():
+                self.current_environment = self.launch_environment
+                self.get_logger().info(
+                    f'Current environment from launch: {self.current_environment}'
+                )
+            else:
+                self.get_logger().warning(
+                    f'Launch environment "{self.launch_environment}" '
+                    f'does not exist.'
+                )
+
+        if self.current_environment is None and self.current_environment_file.exists():
             current_name = (
                 self.current_environment_file
                 .read_text(encoding='utf-8')
@@ -88,7 +123,7 @@ class EnvironmentManager(Node):
                 if current_dir.is_dir():
                     self.current_environment = current_name
                     self.get_logger().info(
-                        f'Current environment: {self.current_environment}'
+                        f'Current environment from file: {self.current_environment}'
                     )
                 else:
                     self.get_logger().warning(
@@ -99,7 +134,7 @@ class EnvironmentManager(Node):
                 self.get_logger().warning(
                     'current_environment file is empty.'
                 )
-        else:
+        elif self.current_environment is None:
             self.get_logger().warning(
                 'current_environment file not found.'
             )
@@ -204,7 +239,45 @@ class EnvironmentManager(Node):
         )
 
 
+    def handle_interaction_mode(self, msg):
+        self.interaction_mode = msg.data.strip()
+
+        self.get_logger().info(
+            f"Interaction mode changed to: {self.interaction_mode}"
+        )
+
+
     def handle_clicked_point(self, msg):
+        # Manual navigation goal:
+        # One click = navigation destination.
+        if self.interaction_mode == "navigation_goal":
+            x = msg.point.x
+            y = msg.point.y
+
+            self.get_logger().info(
+                f'Manual navigation goal selected: '
+                f'x={x:.3f}, y={y:.3f}'
+            )
+
+            if not self.navigation_goal_client.wait_for_service(
+                timeout_sec=2.0
+            ):
+                self.get_logger().error(
+                    'Navigation goal service is not available.'
+                )
+                return
+
+            request = SetNavigationGoal.Request()
+            request.x = x
+            request.y = y
+
+            future = self.navigation_goal_client.call_async(request)
+            future.add_done_callback(
+                self.handle_navigation_goal_result
+            )
+
+            return
+
         # Localization mode:
         # First click = robot position.
         # Second click = point defining robot heading.
@@ -332,6 +405,25 @@ class EnvironmentManager(Node):
             )
 
             return
+
+    def handle_navigation_goal_result(self, future):
+        try:
+            result = future.result()
+
+            if result.success:
+                self.get_logger().info(
+                    f'Navigation goal accepted: {result.message}'
+                )
+            else:
+                self.get_logger().error(
+                    f'Navigation goal rejected: {result.message}'
+                )
+
+        except Exception as error:
+            self.get_logger().error(
+                f'Failed to send navigation goal: {error}'
+            )
+
 
     def handle_manual_pose_result(self, future):
         try:

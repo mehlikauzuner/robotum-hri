@@ -8,7 +8,6 @@ interface Props {
 
 function ExamplePanel({ context }: Props): ReactElement {
   const [command, setCommand] = useState("");
-  const [lastCommand, setLastCommand] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [voiceError, setVoiceError] = useState("");
 
@@ -16,7 +15,6 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [queue, setQueue] = useState<string[]>([]);
   const [statusError, setStatusError] = useState("");
 
-  const [parsedAction, setParsedAction] = useState("{ action: waiting }");
   const [robotResponse, setRobotResponse] = useState("Waiting for response...");
 
   const [showReplyModal, setShowReplyModal] = useState(false);
@@ -27,6 +25,7 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [objectName, setObjectName] = useState("");
   const [objectType, setObjectType] = useState("");
   const [currentEnvironment, setCurrentEnvironment] = useState("Unknown");
+  const ignoreMappingStatusRef = useRef(false);
   const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
   const [newEnvironmentName, setNewEnvironmentName] = useState("");
   const [environmentMessage, setEnvironmentMessage] = useState("");
@@ -34,6 +33,15 @@ function ExamplePanel({ context }: Props): ReactElement {
   const [availableEnvironments, setAvailableEnvironments] = useState<string[]>([]);
   const [selectedEnvironment, setSelectedEnvironment] = useState("");
   const [isMapping, setIsMapping] = useState(false);
+  const [mapTool, setMapTool] = useState<
+    "none" | "semantic" | "initial_pose" | "navigation_goal"
+  >("none");
+
+  const [initialPoseStep, setInitialPoseStep] = useState<1 | 2>(1);
+  const [initialPoseFirstPoint, setInitialPoseFirstPoint] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -65,7 +73,7 @@ function ExamplePanel({ context }: Props): ReactElement {
       });
 
       setObjectName("");
-      setObjectType("furniture");
+      setObjectType("");
     } catch (error) {
       console.error("Failed to save semantic object:", error);
     }
@@ -258,6 +266,8 @@ function ExamplePanel({ context }: Props): ReactElement {
 
       if (result.success) {
         setIsMapping(false);
+        ignoreMappingStatusRef.current = true;
+        setCurrentAction("Idle");
         setEnvironmentMessage(
           result.message || "Environment saved successfully.",
         );
@@ -303,19 +313,18 @@ function ExamplePanel({ context }: Props): ReactElement {
 
     activeCommandRef.current = nextCommand;
 
-    context.publish("/user_command", {
+    context.publish?.("/user_command", {
       data: nextCommand,
     });
 
-    setLastCommand(nextCommand);
   };
 
   useEffect(() => {
+    context.advertise?.("/interaction_mode", "std_msgs/msg/String");
     context.advertise?.("/stop_navigation", "std_msgs/msg/Empty");
 
     context.subscribe([
       { topic: "/robot_status" },
-      { topic: "/parsed_command" },
       { topic: "/robot_response" },
       { topic: "/clicked_point" },
       { topic: "/current_environment" },
@@ -345,8 +354,31 @@ function ExamplePanel({ context }: Props): ReactElement {
             typeof data.point?.x === "number" &&
             typeof data.point?.y === "number"
           ) {
-            setClickedX(data.point.x);
-            setClickedY(data.point.y);
+            const x = data.point.x;
+            const y = data.point.y;
+
+            setClickedX(x);
+            setClickedY(y);
+
+            if (mapTool === "navigation_goal") {
+        setMapTool("none");
+
+        context.publish?.("/interaction_mode", {
+          data: "none",
+        });
+
+        return;
+      }
+
+      if (mapTool === "initial_pose") {
+              if (initialPoseStep === 1) {
+                setInitialPoseFirstPoint({ x, y });
+                setInitialPoseStep(2);
+              } else {
+                setInitialPoseStep(1);
+                setInitialPoseFirstPoint(null);
+              }
+            }
           }
         }
 
@@ -359,7 +391,14 @@ function ExamplePanel({ context }: Props): ReactElement {
             console.log("ROBOT STATUS RECEIVED:", status);
 
             if (typeof status.current_action === "string") {
-              setCurrentAction(status.current_action);
+              const action = status.current_action;
+
+              if (ignoreMappingStatusRef.current && action === "Mapping") {
+                continue;
+              }
+
+              ignoreMappingStatusRef.current = false;
+              setCurrentAction(action);
             }
 
             // Queue progression is based on structured status,
@@ -407,16 +446,9 @@ function ExamplePanel({ context }: Props): ReactElement {
           }
         }
 
-        if (message.topic === "/parsed_command") {
-          const data = message.message as { data?: string };
 
-          try {
-            const parsed = JSON.parse(data.data ?? "{}");
-            setParsedAction(JSON.stringify(parsed));
-          } catch {
-            setParsedAction(data.data ?? "{ invalid }");
-          }
-        }
+
+
 
         if (message.topic === "/robot_response") {
           const data = message.message as { data?: string };
@@ -502,7 +534,7 @@ function ExamplePanel({ context }: Props): ReactElement {
 
           if (text) {
             setCommand(text);
-            setLastCommand(text);
+
           }
         } catch (error) {
           console.error(
@@ -553,7 +585,7 @@ function ExamplePanel({ context }: Props): ReactElement {
       queueDelayTimerRef.current = null;
     }
 
-    context.publish("/stop_navigation", {});
+    context.publish?.("/stop_navigation", {});
 
     activeCommandRef.current = null;
     commandQueueRef.current = [];
@@ -587,18 +619,17 @@ function ExamplePanel({ context }: Props): ReactElement {
     if (!activeCommandRef.current) {
       activeCommandRef.current = trimmedCommand;
 
-      context.publish("/user_command", {
+      context.publish?.("/user_command", {
         data: trimmedCommand,
       });
 
-      setLastCommand(trimmedCommand);
       setCommand("");
       return;
     }
 
     commandQueueRef.current.push(trimmedCommand);
     setQueue([...commandQueueRef.current]);
-    setLastCommand(trimmedCommand);
+
     setCommand("");
   };
 
@@ -623,6 +654,7 @@ function ExamplePanel({ context }: Props): ReactElement {
 
       if (result.success) {
         setIsMapping(true);
+        setCurrentAction("Creating new environment...");
         setEnvironmentMessage(
           result.message || "New mapping session started.",
         );
@@ -698,7 +730,7 @@ function ExamplePanel({ context }: Props): ReactElement {
             fontWeight: 600,
           }}
         >
-          {currentEnvironment}
+          {isMapping ? "Creating new environment..." : currentEnvironment}
         </div>
 
         {!isMapping ? (
@@ -957,7 +989,268 @@ function ExamplePanel({ context }: Props): ReactElement {
             )}
           </div>
 
+          {/* Map Tools */}
+          <div
+            style={{
+              marginTop: "14px",
+              marginBottom: "14px",
+              padding: "12px",
+              borderRadius: "9px",
+              border: "1px solid rgba(128,128,128,0.25)",
+              background: "rgba(128,128,128,0.05)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "15px",
+                fontWeight: 600,
+                marginBottom: "10px",
+              }}
+            >
+              🗺️ MAP TOOLS
+            </div>
+
+            <button
+              onClick={() => {
+                const nextTool =
+                  mapTool === "semantic" ? "none" : "semantic";
+
+                setMapTool(nextTool);
+
+                context.publish?.("/interaction_mode", {
+                  data: nextTool,
+                });
+              }}
+              style={{
+                width: "100%",
+                padding: "9px",
+                marginBottom: "7px",
+                border: "none",
+                borderRadius: "7px",
+                cursor: "pointer",
+                fontSize: "13px",
+                fontWeight: 600,
+                background:
+                  mapTool === "semantic"
+                    ? "rgba(70,130,180,0.25)"
+                    : "rgba(128,128,128,0.10)",
+              }}
+            >
+              🗺️ Create Semantic Map
+            </button>
+
+            <button
+              onClick={() => {
+                const nextTool =
+                  mapTool === "initial_pose" ? "none" : "initial_pose";
+
+                setMapTool(nextTool);
+
+                context.publish?.("/interaction_mode", {
+                  data: nextTool,
+                });
+              }}
+              style={{
+                width: "100%",
+                padding: "9px",
+                marginBottom: "7px",
+                border: "none",
+                borderRadius: "7px",
+                cursor: "pointer",
+                fontSize: "13px",
+                fontWeight: 600,
+                background:
+                  mapTool === "initial_pose"
+                    ? "rgba(70,130,180,0.25)"
+                    : "rgba(128,128,128,0.10)",
+              }}
+            >
+              🤖 Set Initial Robot Pose
+            </button>
+
+            <button
+              onClick={() => {
+                const nextTool =
+                  mapTool === "navigation_goal"
+                    ? "none"
+                    : "navigation_goal";
+
+                setMapTool(nextTool);
+
+                context.publish?.("/interaction_mode", {
+                  data: nextTool,
+                });
+              }}
+              style={{
+                width: "100%",
+                padding: "9px",
+                border: "none",
+                borderRadius: "7px",
+                cursor: "pointer",
+                fontSize: "13px",
+                fontWeight: 600,
+                background: "rgba(128,128,128,0.10)",
+              }}
+            >
+              🎯 Set Navigation Goal
+            </button>
+          </div>
+
+          {/* Navigation Goal */}
+  {mapTool === "navigation_goal" && (
+    <div
+      style={{
+        marginTop: 10,
+        padding: 12,
+        borderRadius: 8,
+        background: "#1f2937",
+        border: "1px solid #374151",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          marginBottom: 6,
+        }}
+      >
+        🎯 Navigation Goal
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          color: "#9ca3af",
+          marginBottom: 10,
+        }}
+      >
+        Select the destination point on the map.
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        Step 1 / 1 — 📍 Destination
+      </div>
+
+      <div
+        style={{
+          fontSize: 11,
+          color: "#9ca3af",
+          marginTop: 4,
+        }}
+      >
+        Click once on the map to send the robot to that location.
+      </div>
+
+      {clickedX !== null && clickedY !== null && (
+        <div
+          style={{
+            marginTop: 10,
+            fontSize: 11,
+            color: "#d1d5db",
+          }}
+        >
+          Selected: ({clickedX.toFixed(3)}, {clickedY.toFixed(3)})
+        </div>
+      )}
+    </div>
+  )}
+
+  {/* Initial Robot Pose */}
+          {mapTool === "initial_pose" && (
+            <div
+              style={{
+                marginTop: "14px",
+                marginBottom: "14px",
+                padding: "12px",
+                borderRadius: "9px",
+                border: "1px solid rgba(70,130,180,0.35)",
+                background: "rgba(70,130,180,0.08)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  marginBottom: "10px",
+                }}
+              >
+                🤖 Initial Robot Pose
+              </div>
+
+              <div
+                style={{
+                  fontSize: "12px",
+                  marginBottom: "10px",
+                  opacity: 0.75,
+                }}
+              >
+                Set the robot's starting position and heading on the map.
+              </div>
+
+              <div
+                style={{
+                  padding: "9px",
+                  borderRadius: "7px",
+                  background:
+                    initialPoseStep === 1
+                      ? "rgba(70,130,180,0.18)"
+                      : "rgba(128,128,128,0.08)",
+                  marginBottom: "7px",
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: "12px" }}>
+                  Step 1 / 2 — 📍 Robot Position
+                </div>
+                <div
+                  style={{
+                    fontSize: "11px",
+                    marginTop: "4px",
+                    opacity: 0.7,
+                  }}
+                >
+                  {initialPoseStep === 1
+                    ? "Click the robot's position on the map."
+                    : initialPoseFirstPoint
+                      ? `Position selected: (${initialPoseFirstPoint.x.toFixed(3)}, ${initialPoseFirstPoint.y.toFixed(3)})`
+                      : "Position selected."}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  padding: "9px",
+                  borderRadius: "7px",
+                  background:
+                    initialPoseStep === 2
+                      ? "rgba(70,130,180,0.18)"
+                      : "rgba(128,128,128,0.08)",
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: "12px" }}>
+                  Step 2 / 2 — 🧭 Robot Heading
+                </div>
+                <div
+                  style={{
+                    fontSize: "11px",
+                    marginTop: "4px",
+                    opacity: 0.7,
+                  }}
+                >
+                  {initialPoseStep === 2
+                    ? "Click in the direction the robot is facing."
+                    : "Waiting for the robot position."}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Semantic Object */}
+          {mapTool === "semantic" && (
           <div
             style={{
               marginTop: "14px",
@@ -1104,6 +1397,8 @@ function ExamplePanel({ context }: Props): ReactElement {
               💾 Save Object
             </button>
           </div>
+
+          )}
 
           {/* Error / Battery */}
           <div
@@ -1283,117 +1578,61 @@ function ExamplePanel({ context }: Props): ReactElement {
         </div>
       </div>
 
-      {/* Last Command */}
-      <div style={{ marginBottom: "18px" }}>
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            marginBottom: "8px",
-          }}
-        >
-          📋 Last Command
-        </div>
+          {/* Robot Response */}
+          <div style={{ marginBottom: "18px" }}>
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: 600,
+                marginBottom: "8px",
+              }}
+            >
+              🤖 Robot Response
+            </div>
 
-        <div
-          style={{
-            padding: "11px 12px",
-            borderRadius: "8px",
-            border:
-              "1px solid rgba(128,128,128,0.25)",
-            minHeight: "18px",
-            fontSize: "13px",
-            opacity: lastCommand ? 1 : 0.5,
-          }}
-        >
-          {lastCommand ||
-            "No command sent yet."}
-        </div>
-      </div>
+            <div
+              style={{
+                padding: "12px",
+                borderRadius: "8px",
+                border: "1px solid rgba(128,128,128,0.25)",
+                minHeight: "18px",
+                fontSize: "13px",
+                opacity: robotResponse ? 1 : 0.5,
+                wordBreak: "break-word",
+              }}
+            >
+              <div>{robotResponse}</div>
 
-      {/* Robot Response */}
-      <div style={{ marginBottom: "18px" }}>
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            marginBottom: "8px",
-          }}
-        >
-          🤖 Robot Response
-        </div>
+              {robotResponse &&
+                robotResponse !== "Waiting for response..." && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginTop: "10px",
+                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        setReply("");
+                        setShowReplyModal(true);
+                      }}
+                      style={{
+                        padding: "6px 12px",
+                        borderRadius: "7px",
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ↩ Reply
+                    </button>
+                  </div>
+                )}
+            </div>
+          </div>
 
-        <div
-          style={{
-            padding: "11px 12px",
-            borderRadius: "8px",
-            border:
-              "1px solid rgba(128,128,128,0.25)",
-            minHeight: "18px",
-            fontSize: "13px",
-            opacity: robotResponse ? 1 : 0.5,
-            wordBreak: "break-word",
-          }}
-        >
-          <div>{robotResponse}</div>
-
-          {robotResponse &&
-            robotResponse !== "Waiting for response..." && (
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  marginTop: "10px",
-                }}
-              >
-                <button
-                  onClick={() => {
-                    setReply("");
-                    setShowReplyModal(true);
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: "7px",
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                  }}
-                >
-                  ↩ Reply
-                </button>
-              </div>
-            )}
-        </div>
-      </div>
-
-      {/* Parsed Action */}
-      <div style={{ marginBottom: "18px" }}>
-        <div
-          style={{
-            fontSize: "14px",
-            fontWeight: 600,
-            marginBottom: "8px",
-          }}
-        >
-          🔎 Parsed Action
-        </div>
-
-        <div
-          style={{
-            padding: "12px",
-            borderRadius: "8px",
-            border:
-              "1px solid rgba(128,128,128,0.25)",
-            fontFamily: "monospace",
-            fontSize: "12px",
-            opacity: 0.8,
-            wordBreak: "break-word",
-          }}
-        >
-          {parsedAction}
-        </div>
-      </div>
 
       {/* Save Environment Modal */}
       {showChangeEnvironmentModal && (
@@ -1787,7 +2026,6 @@ function ExamplePanel({ context }: Props): ReactElement {
                     data: trimmedReply,
                   });
 
-                  setLastCommand(trimmedReply);
                   setReply("");
                   setShowReplyModal(false);
                 }}
