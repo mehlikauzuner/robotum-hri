@@ -44,6 +44,12 @@ class EnvironmentManager(Node):
 
         self.manual_initial_pose_pending = (self.mode == 'localization')
 
+        # Localization sırasında kullanıcıdan alınacak başlangıç pozu.
+        # İlk tıklama: robot konumu
+        # İkinci tıklama: robotun baktığı yönü gösteren nokta
+        self.localization_initial_pose_point = None
+        self.localization_initial_pose_yaw = None
+
         # Mapping sırasında kullanıcıdan alınacak başlangıç pozu.
         # İlk tıklama: robot konumu
         # İkinci tıklama: robotun baktığı yönü gösteren nokta
@@ -200,20 +206,54 @@ class EnvironmentManager(Node):
 
     def handle_clicked_point(self, msg):
         # Localization mode:
-        # Existing manual initial pose behavior remains unchanged.
+        # First click = robot position.
+        # Second click = point defining robot heading.
         if self.manual_initial_pose_pending:
+            if self.localization_initial_pose_point is None:
+                self.localization_initial_pose_point = (
+                    msg.point.x,
+                    msg.point.y
+                )
+
+                self.get_logger().info(
+                    f'Localization initial position selected: '
+                    f'x={msg.point.x:.3f}, y={msg.point.y:.3f}. '
+                    f'Click a second point to define robot heading.'
+                )
+                return
+
+            x1, y1 = self.localization_initial_pose_point
+            x2 = msg.point.x
+            y2 = msg.point.y
+
+            dx = x2 - x1
+            dy = y2 - y1
+
+            if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+                self.get_logger().warning(
+                    'Second localization click is too close to the first click. '
+                    'Please click again to define the heading.'
+                )
+                return
+
+            self.localization_initial_pose_yaw = math.atan2(dy, dx)
+
             pose = PoseWithCovarianceStamped()
             pose.header.stamp = self.get_clock().now().to_msg()
             pose.header.frame_id = 'map'
 
-            pose.pose.pose.position.x = msg.point.x
-            pose.pose.pose.position.y = msg.point.y
+            pose.pose.pose.position.x = x1
+            pose.pose.pose.position.y = y1
             pose.pose.pose.position.z = 0.0
 
             pose.pose.pose.orientation.x = 0.0
             pose.pose.pose.orientation.y = 0.0
-            pose.pose.pose.orientation.z = 0.0
-            pose.pose.pose.orientation.w = 1.0
+            pose.pose.pose.orientation.z = math.sin(
+                self.localization_initial_pose_yaw / 2.0
+            )
+            pose.pose.pose.orientation.w = math.cos(
+                self.localization_initial_pose_yaw / 2.0
+            )
 
             pose.pose.covariance[0] = 0.25
             pose.pose.covariance[7] = 0.25
@@ -221,12 +261,15 @@ class EnvironmentManager(Node):
 
             self.initial_pose_pub.publish(pose)
 
-            self.manual_initial_pose_pending = False
-
             self.get_logger().info(
                 f'Manual initial pose published: '
-                f'x={msg.point.x:.3f}, y={msg.point.y:.3f}'
+                f'x={x1:.3f}, y={y1:.3f}, '
+                f'yaw={math.degrees(self.localization_initial_pose_yaw):.1f} deg'
             )
+
+            self.manual_initial_pose_pending = False
+            self.localization_initial_pose_point = None
+            self.localization_initial_pose_yaw = None
             return
 
         # Mapping mode:
