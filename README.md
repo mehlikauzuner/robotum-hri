@@ -665,3 +665,72 @@ The complete system can be started with:
 ```bash
 ros2 launch hri_bringup hri_sim.launch.py
 ```
+## Foxglove Command Center
+
+The project includes a custom Foxglove extension located at:
+
+```text
+foxglove_extensions/hri-command-center/
+```
+
+The extension provides the custom **ExamplePanel / Robot Command Center** panel used to interact with the Robotum HRI system.
+
+### Requirements
+
+You need:
+
+* Foxglove Studio Desktop
+* Node.js
+* npm
+
+Check whether Node.js and npm are installed:
+
+```bash
+node -v
+npm -v
+```
+
+If they are not installed, install Node.js and npm before continuing. npm recommends using a Node.js version manager such as `nvm`.
+
+### Install the Foxglove Extension
+
+After cloning the repository, open a terminal and go to the extension directory:
+
+```bash
+cd web-based-human-robot-interaction-platform/foxglove_extensions/hri-command-center
+```
+
+Install the extension dependencies:
+
+```bash
+npm install
+```
+
+Then build and install the extension locally into Foxglove Studio:
+
+```bash
+npm run local-install
+```
+
+`npm install` installs the dependencies defined by the extension's `package.json`, while `npm run local-install` builds the extension and places the compiled extension in Foxglove's local extensions directory.
+
+### Open the Panel in Foxglove
+
+1. Open **Foxglove Studio Desktop**.
+2. Restart Foxglove Studio if it was already open.
+3. Open a layout or visualization.
+4. Select **Add Panel**.
+5. Select **ExamplePanel**.
+
+The custom panel should now be available in Foxglove.
+
+### Updating the Extension
+
+If the extension source code is modified, run:
+
+```bash
+cd web-based-human-robot-interaction-platform/foxglove_extensions/hri-command-center
+npm run local-install
+```
+
+Then reload or restart Foxglove Studio to use the updated extension.
