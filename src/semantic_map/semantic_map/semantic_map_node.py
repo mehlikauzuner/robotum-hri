@@ -4,6 +4,7 @@ import json
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String
 from geometry_msgs.msg import PointStamped, PoseWithCovarianceStamped
 import tf2_ros
@@ -64,6 +65,18 @@ class SemanticMapNode(Node):
             String,
             "/semantic_command",
             10
+        )
+
+        targets_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+
+        self.targets_publisher = self.create_publisher(
+            String,
+            "/semantic_targets",
+            targets_qos
         )
 
         self.response_publisher = self.create_publisher(
@@ -136,6 +149,11 @@ class SemanticMapNode(Node):
             self.get_logger().info(
                 f"Loaded {len(objects)} semantic objects."
             )
+
+            if hasattr(self, "targets_publisher"):
+                targets = String()
+                targets.data = json.dumps(list(objects.keys()))
+                self.targets_publisher.publish(targets)
 
             return objects
 

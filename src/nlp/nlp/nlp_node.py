@@ -1,9 +1,11 @@
 import json
 import urllib.request
+import difflib
 import threading
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import String
 
 
@@ -32,8 +34,65 @@ class NLPNode(Node):
         )
 
         self.pending_context = None
+        self.semantic_targets = []
+
+        targets_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+
+        self.semantic_targets_subscription = self.create_subscription(
+            String,
+            "/semantic_targets",
+            self.semantic_targets_callback,
+            targets_qos
+        )
 
         self.get_logger().info("NLP Node Started.")
+
+    def semantic_targets_callback(self, msg):
+        try:
+            targets = json.loads(msg.data)
+
+            if isinstance(targets, list):
+                self.semantic_targets = [
+                    str(target).strip()
+                    for target in targets
+                    if str(target).strip()
+                ]
+
+                self.get_logger().info(
+                    f"Updated semantic targets: {self.semantic_targets}"
+                )
+
+        except json.JSONDecodeError:
+            self.get_logger().warning(
+                "Invalid semantic targets JSON."
+            )
+
+    def fuzzy_match_target(self, target):
+        if not self.semantic_targets:
+            return None
+
+        target = target.strip().lower()
+
+        target_map = {
+            target_name.lower(): target_name
+            for target_name in self.semantic_targets
+        }
+
+        matches = difflib.get_close_matches(
+            target,
+            target_map.keys(),
+            n=1,
+            cutoff=0.75
+        )
+
+        if not matches:
+            return None
+
+        return target_map[matches[0]]
 
     def command_callback(self, msg):
         command = msg.data.strip()
@@ -149,26 +208,24 @@ class NLPNode(Node):
             }
 
         # NAVIGATION
-        navigation_prefixes = (
+        # Navigation commands are handled by the LLM so that
+        # natural language, polite expressions, and spelling
+        # mistakes can be interpreted using the current semantic map.
+        navigation_indicators = (
             "go to ",
+            "goto ",
             "move to ",
             "navigate to ",
             "drive to ",
             "take me to ",
+            "please go to ",
+            "please goto ",
             "git ",
             "git to ",
         )
 
-        for prefix in navigation_prefixes:
-            if normalized.startswith(prefix):
-                target = text[len(prefix):].strip()
-
-                if target:
-                    return {
-                        "status": "valid",
-                        "action": "navigate",
-                        "target": target,
-                    }
+        if normalized.startswith(navigation_indicators):
+            return None
 
         return None
 
@@ -206,25 +263,53 @@ class NLPNode(Node):
                 "Using previous dialogue context."
             )
 
+        targets_text = json.dumps(
+            self.semantic_targets,
+            ensure_ascii=False
+        )
+
         prompt = (
-            "Parse the user's command. Return JSON only. "
-            "For navigation return "
-            '{"status":"valid","action":"navigate","target":"TARGET"}. '
-            "For forward return "
-            '{"status":"valid","action":"move","direction":"forward"}. '
-            "For backward return "
-            '{"status":"valid","action":"move","direction":"backward"}. '
-            "For left rotation return "
-            '{"status":"valid","action":"rotate","direction":"left"}. '
-            "For right rotation return "
-            '{"status":"valid","action":"rotate","direction":"right"}. '
-            "For stop return "
-            '{"status":"valid","action":"stop"}. '
-            "For navigation, copy the target exactly. "
-            "Never generate coordinates. "
-            'If the target is unclear, return '
-            '{"status":"clarification","response":"Which target do you mean?"}. '
-            f"USER: {command} "
+            "You are the natural-language interface of a mobile robot. "
+            "Return JSON only. "
+            "\n\n"
+
+            "VALID TARGETS: "
+            f"{targets_text}. "
+            "For navigation, use only a target from this list. "
+            "A target not in this list is unavailable. "
+            "\n"
+
+            "CLASSIFY THE USER MESSAGE: "
+            "1. Navigation: the user wants the robot to go somewhere. "
+            "Return valid navigation with the target if it matches a valid target. "
+            "If the target is clearly not in VALID TARGETS, return target_not_found "
+            "and include the requested target. "
+            "If the user wants navigation but no target can be identified, "
+            "return clarification. "
+            "2. Conversation: greetings, thanks, questions about the robot, "
+            "or normal social conversation. Return conversation with a short natural response. "
+            "3. Unknown: if the request is neither a robot command nor normal conversation "
+            "the robot can reasonably answer, return unknown. "
+            "\n"
+
+            "Natural language, polite expressions, and minor spelling mistakes are allowed. "
+            "Normalize a misspelled target when it clearly matches a VALID TARGET. "
+            "\n"
+
+            "OUTPUT EXAMPLES: "
+            'Navigation: {"status":"valid","action":"navigate","target":"TARGET"}. '
+            'Target unavailable: {"status":"target_not_found","target":"TARGET"}. '
+            'Ambiguous navigation: {"status":"clarification","response":"Which target do you mean?"}. '
+            'Conversation: {"status":"conversation","response":"SHORT RESPONSE"}. '
+            'Unknown: {"status":"unknown"}. '
+            'Forward: {"status":"valid","action":"move","direction":"forward"}. '
+            'Backward: {"status":"valid","action":"move","direction":"backward"}. '
+            'Left: {"status":"valid","action":"rotate","direction":"left"}. '
+            'Right: {"status":"valid","action":"rotate","direction":"right"}. '
+            'Stop: {"status":"valid","action":"stop"}. '
+            "\n\n"
+
+            f"USER: {command}\n"
             f"{context_text}"
         )
 
@@ -277,6 +362,71 @@ class NLPNode(Node):
                 "invalid"
             )
 
+            if (
+                status == "valid"
+                and parsed_data.get("action") == "navigate"
+                and parsed_data.get("target")
+            ):
+                original_target = parsed_data["target"]
+                matched_target = self.fuzzy_match_target(
+                    original_target
+                )
+
+                if matched_target:
+                    parsed_data["target"] = matched_target
+
+                    self.get_logger().info(
+                        f"Target normalized: "
+                        f"{original_target} -> {matched_target}"
+                    )
+
+            if status == "valid":
+
+                if (
+                    parsed_data.get("action") == "navigate"
+                    and parsed_data.get("target")
+                ):
+                    original_target = parsed_data["target"]
+                    matched_target = self.fuzzy_match_target(
+                        original_target
+                    )
+
+                    if matched_target:
+                        parsed_data["target"] = matched_target
+
+                        self.get_logger().info(
+                            f"Target normalized: "
+                            f"{original_target} -> {matched_target}"
+                        )
+                    else:
+                        parsed_data = {
+                            "status": "target_not_found",
+                            "target": original_target,
+                        }
+
+                if parsed_data.get("status") == "valid":
+                    self.pending_context = None
+
+                    self.get_logger().info(
+                        "Dialogue context cleared after valid command."
+                    )
+
+                    self.publish_parsed(parsed_data)
+                    return
+
+                status = parsed_data.get("status")
+
+            if status == "target_not_found":
+
+                self.pending_context = None
+
+                target = parsed_data.get("target", "that target")
+
+                self.publish_response(
+                    f"I could not find '{target}' in the current map."
+                )
+                return
+
             if status == "clarification":
 
                 self.pending_context = {
@@ -294,25 +444,40 @@ class NLPNode(Node):
                         "Which target do you mean?",
                     )
                 )
+                return
 
-            elif status == "valid":
+            if status == "conversation":
 
                 self.pending_context = None
-
-                self.get_logger().info(
-                    "Dialogue context cleared after valid command."
-                )
-
-                self.publish_parsed(parsed_data)
-
-            else:
 
                 self.publish_response(
                     parsed_data.get(
                         "response",
-                        "I could not understand the command.",
+                        "How can I help you?",
                     )
                 )
+                return
+
+            if status == "unknown":
+
+                self.pending_context = None
+
+                self.publish_response(
+                    parsed_data.get(
+                        "response",
+                        "I could not understand your command.",
+                    )
+                )
+                return
+
+            self.pending_context = None
+
+            self.publish_response(
+                parsed_data.get(
+                    "response",
+                    "I could not understand your command.",
+                )
+            )
 
         except Exception as e:
 

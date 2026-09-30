@@ -13,19 +13,18 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    current_environment_file = Path(
-        '/home/mehlika/robotum-hri-github/environments/current_environment'
-    )
+    environments_dir = Path.cwd() / 'environments'
+    current_environment_file = environments_dir / 'current_environment'
 
     if current_environment_file.exists():
         current_environment = current_environment_file.read_text(
             encoding='utf-8'
         ).strip()
     else:
-        current_environment = 'test_environment'
+        current_environment = 'demo'
 
     if not current_environment:
-        current_environment = 'test_environment'
+        current_environment = 'demo'
 
     declare_mode = DeclareLaunchArgument('mode', default_value='mapping')
     declare_environment = DeclareLaunchArgument(
@@ -70,7 +69,7 @@ def generate_launch_description():
     )
 
     environment_map = PathJoinSubstitution([
-        "/home/mehlika/robotum-hri-github/environments",
+        str(environments_dir),
         environment,
         "map.yaml"
     ])
